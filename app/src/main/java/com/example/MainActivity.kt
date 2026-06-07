@@ -1,21 +1,20 @@
 package com.example
 
 import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.*
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -23,26 +22,40 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.*
 import com.example.ui.theme.MyApplicationTheme
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -55,8 +68,16 @@ class MainActivity : ComponentActivity() {
         val viewModel: MainViewModel by viewModels { MainViewModelFactory(repository) }
 
         setContent {
-            MyApplicationTheme {
-                MainScreen(viewModel = viewModel)
+            val isDarkTheme by viewModel.appThemeDark.collectAsStateWithLifecycle()
+            MyApplicationTheme(darkTheme = isDarkTheme) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    AppLockWrapper(viewModel = viewModel) {
+                        MainNavigationScreen(viewModel = viewModel)
+                    }
+                }
             }
         }
     }
@@ -72,417 +93,1451 @@ class MainViewModelFactory(private val repository: TaskAndNoteRepository) : View
     }
 }
 
+// --- App Lock Gatekeeper ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel) {
-    var activeTab by remember { mutableStateOf(0) } // 0 = Tasks, 1 = Notes
+fun AppLockWrapper(viewModel: MainViewModel, content: @Composable () -> Unit) {
+    val lockPin by viewModel.appLockPin.collectAsStateWithLifecycle()
+    val isUnlocked by viewModel.appLockUnlocked.collectAsStateWithLifecycle()
     
-    // Dialog control states
-    var showTaskDialog by remember { mutableStateOf(false) }
+    if (lockPin.isEmpty() || isUnlocked) {
+        content()
+    } else {
+        var enteredPin by remember { mutableStateOf("") }
+        var showPinError by remember { mutableStateOf(false) }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(32.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = "Encrypted Lock",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(72.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "Biometric & Vault Lock",
+                fontWeight = FontWeight.Bold,
+                fontSize = 22.sp
+            )
+            Text(
+                text = "Please enter your vault PIN to reveal secure checklists and records.",
+                color = MaterialTheme.colorScheme.outline,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            
+            Spacer(Modifier.height(32.dp))
+            
+            // Masked dots representation
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                (1..4).forEach { index ->
+                    val isFilled = enteredPin.length >= index
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isFilled) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant
+                            )
+                    )
+                }
+            }
+
+            if (showPinError) {
+                Text(
+                    text = "Incorrect personal PIN code context. Try again.",
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 16.dp)
+                )
+            }
+
+            Spacer(Modifier.height(32.dp))
+
+            // Traditional numeric security keypad
+            val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "OK")
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.width(260.dp)
+            ) {
+                items(keys) { key ->
+                    Box(
+                        modifier = Modifier
+                            .aspectRatio(1.2f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable {
+                                when (key) {
+                                    "C" -> {
+                                        enteredPin = ""
+                                        showPinError = false
+                                    }
+                                    "OK" -> {
+                                        if (enteredPin == lockPin) {
+                                            viewModel.appLockUnlocked.value = true
+                                        } else {
+                                            showPinError = true
+                                            enteredPin = ""
+                                        }
+                                    }
+                                    else -> {
+                                        if (enteredPin.length < 4) {
+                                            enteredPin += key
+                                        }
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = key,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --- Navigation Layout Center ---
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MainNavigationScreen(viewModel: MainViewModel) {
+    var navigationIndex by remember { mutableStateOf(0) }
+    
+    // Dialog triggers
+    var showTaskCreator by remember { mutableStateOf(false) }
     var taskToEdit by remember { mutableStateOf<Task?>(null) }
-
-    var showNoteDialog by remember { mutableStateOf(false) }
+    var showNoteCreator by remember { mutableStateOf(false) }
     var noteToEdit by remember { mutableStateOf<Note?>(null) }
+    var showHabitCreator by remember { mutableStateOf(false) }
+    var showDrawPad by remember { mutableStateOf(false) }
+    var showVoiceController by remember { mutableStateOf(false) }
+    var showOcrScanner by remember { mutableStateOf(false) }
 
-    // State flows
+    // Collect current values
     val notes by viewModel.filteredNotes.collectAsStateWithLifecycle()
     val tasks by viewModel.filteredTasks.collectAsStateWithLifecycle()
+    val habits by viewModel.allHabits.collectAsStateWithLifecycle()
     val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.List,
-                            contentDescription = "App Icon Logo",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text(
-                            text = "Notes & Tasks",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)
-                )
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    if (activeTab == 0) {
-                        taskToEdit = null
-                        showTaskDialog = true
-                    } else {
-                        noteToEdit = null
-                        showNoteDialog = true
-                    }
-                },
-                modifier = Modifier.testTag(if (activeTab == 0) "add_task_fab" else "add_note_fab"),
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        bottomBar = {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                windowInsets = WindowInsets.navigationBars
             ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = if (activeTab == 0) "Add Task" else "Add Note"
+                NavigationBarItem(
+                    selected = navigationIndex == 0,
+                    onClick = { navigationIndex = 0 },
+                    icon = { Icon(Icons.Default.Home, "Dashboard") },
+                    label = { Text("Dashboard", fontSize = 11.sp) }
+                )
+                NavigationBarItem(
+                    selected = navigationIndex == 1,
+                    onClick = { navigationIndex = 1 },
+                    icon = { Icon(Icons.Default.CheckCircle, "Todos") },
+                    label = { Text("Todos", fontSize = 11.sp) }
+                )
+                NavigationBarItem(
+                    selected = navigationIndex == 2,
+                    onClick = { navigationIndex = 2 },
+                    icon = { Icon(Icons.Default.Edit, "Notes Workspace") },
+                    label = { Text("Notes", fontSize = 11.sp) }
+                )
+                NavigationBarItem(
+                    selected = navigationIndex == 3,
+                    onClick = { navigationIndex = 3 },
+                    icon = { Icon(Icons.Default.Refresh, "Habits & Habits") },
+                    label = { Text("Daily Hub", fontSize = 11.sp) }
+                )
+                NavigationBarItem(
+                    selected = navigationIndex == 4,
+                    onClick = { navigationIndex = 4 },
+                    icon = { Icon(Icons.Default.Settings, "Analytics Panel") },
+                    label = { Text("Control", fontSize = 11.sp) }
                 )
             }
-        },
-        modifier = Modifier.fillMaxSize()
+        }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Search Bar & Query Builder
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { viewModel.setSearchQuery(it) },
-                placeholder = { Text("Search records, topics, or checklist items...") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search Icon") },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear Search")
-                        }
-                    }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .testTag("search_input"),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+            when (navigationIndex) {
+                0 -> DashboardWorkspace(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    notes = notes,
+                    habits = habits,
+                    onNavigateToTab = { index -> navigationIndex = index },
+                    onAddTaskQuick = {
+                        taskToEdit = null
+                        showTaskCreator = true
+                    },
+                    onAddNoteQuick = {
+                        noteToEdit = null
+                        showNoteCreator = true
+                    },
+                    onRecordVoiceQuick = { showVoiceController = true },
+                    onDrawPadQuick = { showDrawPad = true },
+                    onOcrScannerQuick = { showOcrScanner = true }
                 )
-            )
-
-            // Segmented Workspace Navigator (Tabs)
-            TabRow(
-                selectedTabIndex = activeTab,
-                modifier = Modifier.fillMaxWidth(),
-                containerColor = MaterialTheme.colorScheme.surface
-            ) {
-                Tab(
-                    selected = activeTab == 0,
-                    onClick = { activeTab = 0 },
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.CheckCircle, "Tasks Icon", Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Pending Todos (${tasks.count { !it.isCompleted }})", fontWeight = FontWeight.SemiBold)
-                        }
+                1 -> TasksWorkspace(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    onAddTask = {
+                        taskToEdit = null
+                        showTaskCreator = true
+                    },
+                    onEditTask = {
+                        taskToEdit = it
+                        showTaskCreator = true
                     }
                 )
-                Tab(
-                    selected = activeTab == 1,
-                    onClick = { activeTab = 1 },
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Star, "Notes Icon", Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Rich Notes (${notes.size})", fontWeight = FontWeight.SemiBold)
-                        }
-                    }
+                2 -> NotesWorkspace(
+                    viewModel = viewModel,
+                    notes = notes,
+                    onAddNote = {
+                        noteToEdit = null
+                        showNoteCreator = true
+                    },
+                    onEditNote = {
+                        noteToEdit = it
+                        showNoteCreator = true
+                    },
+                    onDrawNotes = { showDrawPad = true }
                 )
-            }
-
-            // Scrollable tag categories at the top level
-            CategoryFilterBar(
-                selectedTag = selectedTag,
-                onTagSelected = { viewModel.setTag(it) }
-            )
-
-            // Dynamic Content Renderer
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.background)
-            ) {
-                if (activeTab == 0) {
-                    TasksWorkspace(
-                        tasks = tasks,
-                        onToggleTask = { viewModel.toggleTask(it) },
-                        onEditTask = {
-                            taskToEdit = it
-                            showTaskDialog = true
-                        },
-                        onDeleteTask = { viewModel.deleteTask(it) }
-                    )
-                } else {
-                    NotesWorkspace(
-                        notes = notes,
-                        onEditNote = {
-                            noteToEdit = it
-                            showNoteDialog = true
-                        },
-                        onDeleteNote = { viewModel.deleteNote(it) },
-                        onTriggerAiSummary = { viewModel.summarizeAndGenerateTasksFromNote(it) }
-                    )
-                }
+                3 -> DailyHubWorkspace(
+                    viewModel = viewModel,
+                    habits = habits,
+                    tasks = tasks,
+                    onAddHabit = { showHabitCreator = true }
+                )
+                4 -> ControlAndPreferencesWorkspace(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    notes = notes
+                )
             }
         }
     }
 
-    // Task Create / Update dialog
-    if (showTaskDialog) {
+    // Task Dialog Control
+    if (showTaskCreator) {
         TaskEditorDialog(
             task = taskToEdit,
-            onDismiss = { showTaskDialog = false },
-            onSave = { title, desc, p, t, date ->
+            onDismiss = { showTaskCreator = false },
+            onSave = { title, desc, priority, tag, category, dueDate, dueTime, status, subtasks, recurring, priorityTime, remindOption, depId ->
                 if (taskToEdit == null) {
-                    viewModel.addTask(title, desc, p, t, date)
+                    viewModel.addTask(
+                        title = title,
+                        description = desc,
+                        priority = priority,
+                        tag = tag,
+                        category = category,
+                        dueDateLong = dueDate,
+                        dueTime = dueTime,
+                        status = status,
+                        subtasksText = subtasks,
+                        recurringOption = recurring,
+                        estimatedTimeMinutes = priorityTime,
+                        reminderMinutesBefore = remindOption,
+                        dependencyTaskId = depId
+                    )
                 } else {
                     viewModel.updateTask(taskToEdit!!.copy(
                         title = title,
                         noteText = desc,
-                        priority = p,
-                        tag = t,
-                        dueDateLong = date
+                        priority = priority,
+                        tag = tag,
+                        category = category,
+                        dueDateLong = dueDate,
+                        dueTime = dueTime,
+                        status = status,
+                        subtasksText = subtasks,
+                        recurringOption = recurring,
+                        estimatedTimeMinutes = priorityTime,
+                        reminderMinutesBefore = remindOption,
+                        dependencyTaskId = depId
                     ))
                 }
-                showTaskDialog = false
+                showTaskCreator = false
             }
         )
     }
 
-    // Note Create / Update dialog
-    if (showNoteDialog) {
+    // Note Dialog Control
+    if (showNoteCreator) {
         NoteEditorDialog(
             note = noteToEdit,
-            onDismiss = { showNoteDialog = false },
-            onSave = { title, content, tag, colorHex, checklistText ->
+            onDismiss = { showNoteCreator = false },
+            onSave = { title, text, tag, colorHex, checklist ->
                 if (noteToEdit == null) {
-                    viewModel.addNote(title, content, tag, colorHex, checklistText)
+                    viewModel.addNote(title, text, tag, colorHex, checklist)
                 } else {
                     viewModel.updateNote(noteToEdit!!.copy(
                         title = title,
-                        content = content,
+                        content = text,
                         tag = tag,
                         colorHex = colorHex,
-                        checklistText = checklistText
+                        checklistText = checklist
                     ))
                 }
-                showNoteDialog = false
+                showNoteCreator = false
             }
         )
     }
 
-    // Gemini AI Copilot dialog state
+    // Habit Create Dialog
+    if (showHabitCreator) {
+        HabitCreatorDialog(
+            onDismiss = { showHabitCreator = false },
+            onSave = { name, cat, time ->
+                viewModel.addHabit(name, cat, time)
+                showHabitCreator = false
+            }
+        )
+    }
+
+    // Sketch Canvas Dialog
+    if (showDrawPad) {
+        DrawingCanvasDialog(
+            onDismiss = { showDrawPad = false },
+            onSaveCanvas = { title, content ->
+                viewModel.addNote(
+                    title = "🎨 Draw: $title",
+                    content = content,
+                    tag = "Ideas",
+                    colorHex = "Peach",
+                    checklistText = ""
+                )
+                showDrawPad = false
+            }
+        )
+    }
+
+    // Simulated Voice Parser Command Dialog
+    if (showVoiceController) {
+        VoiceCommandDialog(
+            onDismiss = { showVoiceController = false },
+            onExecuteVoiceCommand = { phrase ->
+                val lower = phrase.lowercase()
+                if (lower.contains("task") || lower.contains("todo")) {
+                    val taskTitle = phrase.substringAfter("task").substringAfter("todo").trim().capitalize()
+                    viewModel.addTask(
+                        title = if (taskTitle.isNotEmpty()) taskTitle else "Voice Command task",
+                        description = "Created automatically via voice command: \"$phrase\"",
+                        priority = "High",
+                        tag = "Personal",
+                        category = "Personal",
+                        dueDateLong = System.currentTimeMillis() + 86400000L,
+                        dueTime = "05:00 PM"
+                    )
+                } else {
+                    viewModel.addNote(
+                        title = "🎙️ Voice Transcribe Note",
+                        content = phrase,
+                        tag = "Ideas",
+                        colorHex = "Blue",
+                        checklistText = ""
+                    )
+                }
+                showVoiceController = false
+            }
+        )
+    }
+
+    // OCR Document Scanner Mockup Dialog
+    if (showOcrScanner) {
+        OcrScannerDialog(
+            onDismiss = { showOcrScanner = false },
+            onSaveOcrText = { title, payload ->
+                viewModel.addNote(
+                    title = "📷 Scanned: $title",
+                    content = payload,
+                    tag = "Work",
+                    colorHex = "Mint",
+                    checklistText = ""
+                )
+                showOcrScanner = false
+            }
+        )
+    }
+
+    // AI State Copilot Dialog
     if (aiState !is AiState.Idle) {
-        AiCopilotDialog(
+        AiResponseDialog(
             aiState = aiState,
             onDismiss = { viewModel.clearAiState() },
-            onSyncTasks = { extractedTasks, tag ->
-                viewModel.addAiGeneratedTasks(extractedTasks, tag)
+            onImportTasks = { items ->
+                viewModel.addAiGeneratedTasks(items, "Ideas")
                 viewModel.clearAiState()
             }
         )
     }
 }
 
-// ================= COMPONENT FRAGMENTS =================
-
+// ==========================================
+// 1. DASHBOARD WORKSPACE (HOME DISPLAY)
+// ==========================================
 @Composable
-fun CategoryFilterBar(
-    selectedTag: String,
-    onTagSelected: (String) -> Unit
-) {
-    val tags = listOf("All", "Work", "Personal", "Ideas", "Urgent")
-
-    // Row is much simpler for horizontal tags bar:
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .height(36.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        tags.forEach { tag ->
-            val isSelected = tag == selectedTag
-            FilterChip(
-                selected = isSelected,
-                onClick = { onTagSelected(tag) },
-                label = { Text(tag) },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                ),
-                modifier = Modifier.testTag("tag_filter_${tag.lowercase()}")
-            )
-        }
-    }
-}
-
-@Composable
-fun TasksWorkspace(
+fun DashboardWorkspace(
+    viewModel: MainViewModel,
     tasks: List<Task>,
-    onToggleTask: (Task) -> Unit,
-    onEditTask: (Task) -> Unit,
-    onDeleteTask: (Task) -> Unit
+    notes: List<Note>,
+    habits: List<Habit>,
+    onNavigateToTab: (Int) -> Unit,
+    onAddTaskQuick: () -> Unit,
+    onAddNoteQuick: () -> Unit,
+    onRecordVoiceQuick: () -> Unit,
+    onDrawPadQuick: () -> Unit,
+    onOcrScannerQuick: () -> Unit
 ) {
-    if (tasks.isEmpty()) {
-        EmptyPlaceholder(
-            icon = Icons.Default.CheckCircle,
-            title = "Zero pending tasks found",
-            subtitle = "Enjoy your day! Tap the FAB to create new todo schedules with priority metrics and dates."
-        )
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            items(tasks, key = { it.id }) { task ->
-                TaskCard(
-                    task = task,
-                    onToggle = { onToggleTask(task) },
-                    onClick = { onEditTask(task) },
-                    onDelete = { onDeleteTask(task) }
-                )
-            }
+    val context = LocalContext.current
+    val userProfileName by viewModel.userProfileName.collectAsStateWithLifecycle()
+    val userProfileEmoji by viewModel.userProfileEmoji.collectAsStateWithLifecycle()
+
+    val pendingTasks = tasks.filter { !it.isCompleted }
+    val completedCount = tasks.count { it.isCompleted }
+    val totalCount = tasks.size
+    val dailyProgress = if (totalCount == 0) 100 else (completedCount * 100) / totalCount
+    
+    // Current live calendar time representation
+    val formatDay = SimpleDateFormat("EEEE, MMM dd", Locale.getDefault()).format(Date())
+    var liveSecondsText by remember { mutableStateOf("") }
+    
+    LaunchedEffect(Unit) {
+        while (true) {
+            liveSecondsText = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+            delay(1000)
         }
     }
-}
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun TaskCard(
-    task: Task,
-    onToggle: () -> Unit,
-    onClick: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Card(
+    LazyColumn(
         modifier = Modifier
-            .fillMaxWidth()
-            .testTag("task_card_${task.id}")
-            .combinedClickable(
-                onClick = onClick
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = if (task.isCompleted) {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            } else {
-                MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
-            }
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Checkbox(
-                checked = task.isCompleted,
-                onCheckedChange = { onToggle() }
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = task.title,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textDecoration = if (task.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
-                    color = if (task.isCompleted) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface
-                )
-                if (task.noteText.isNotEmpty()) {
+        // Welcoming card
+        item {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Welcome back, $userProfileEmoji",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = userProfileName,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                        
+                        // Live clock badge
+                        Box(
+                            modifier = Modifier
+                                .background(Color.Black.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = liveSecondsText,
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
                     Text(
-                        text = task.noteText,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.outline,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp)
+                        text = "📅 $formatDay",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    
+                    // Unified Life Productivity Progress Bar
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Daily Productivity Rate",
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "$dailyProgress%",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = { dailyProgress.toFloat() / 100f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 }
+            }
+        }
 
+        // Quick Actions Dashboard Section
+        item {
+            Text(
+                text = "⚡ Real-Time Quick Modules",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    QuickActionPill(
+                        icon = Icons.Default.Add,
+                        label = "Add Task",
+                        bg = MaterialTheme.colorScheme.primaryContainer,
+                        onClick = onAddTaskQuick
+                    )
+                }
+                item {
+                    QuickActionPill(
+                        icon = Icons.Default.Edit,
+                        label = "Rich Note",
+                        bg = MaterialTheme.colorScheme.secondaryContainer,
+                        onClick = onAddNoteQuick
+                    )
+                }
+                item {
+                    QuickActionPill(
+                        icon = Icons.Default.KeyboardArrowUp,
+                        label = "Voice Memo",
+                        bg = MaterialTheme.colorScheme.tertiaryContainer,
+                        onClick = onRecordVoiceQuick
+                    )
+                }
+                item {
+                    QuickActionPill(
+                        icon = Icons.Default.Face,
+                        label = "Sketch Pad",
+                        bg = Color(0xFFFFECE0),
+                        onClick = onDrawPadQuick
+                    )
+                }
+                item {
+                    QuickActionPill(
+                        icon = Icons.Default.Search,
+                        label = "OCR Scan",
+                        bg = Color(0xFFE2F9E8),
+                        onClick = onOcrScannerQuick
+                    )
+                }
+            }
+        }
+
+        // Eisenhower Fast Matrix Checkup
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onNavigateToTab(1) }, // Navigation tab inside Todos
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "🎯 Priority Matrix (Eisenhower)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Icon(Icons.Default.ArrowForward, contentDescription = "Open matrix", modifier = Modifier.size(16.dp))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(Color(0xFFFFDAD9), RoundedCornerShape(8.dp))
+                                .padding(8.dp)
+                        ) {
+                            Column {
+                                Text("Urgent & Import", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF410002))
+                                Text("${tasks.count { it.priority == "Critical" && !it.isCompleted }} Active", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(Color(0xFFFFECCC), RoundedCornerShape(8.dp))
+                                .padding(8.dp)
+                        ) {
+                            Column {
+                                Text("Import - Non Urgent", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF5E2B00))
+                                Text("${tasks.count { it.priority == "High" && !it.isCompleted }} Active", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Recent Tasks Overview list
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🔔 Imminent Critical Deadlines",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+                TextButton(onClick = { onNavigateToTab(1) }) {
+                    Text("View all", fontSize = 12.sp)
+                }
+            }
+        }
+
+        if (pendingTasks.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Nice job! You have zero outstanding schedules.",
+                        color = MaterialTheme.colorScheme.outline,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        } else {
+            items(pendingTasks.take(3)) { task ->
                 Row(
-                    modifier = Modifier.padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                        .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Priority tag
-                    PriorityBadge(task.priority)
-                    // Tag label
-                    TagBadge(task.tag)
-                    
-                    if (task.dueDateLong > 0L) {
-                        Spacer(Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Default.DateRange,
-                            contentDescription = "Calendar",
-                            tint = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        val dateString = SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(task.dueDateLong))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when (task.priority) {
+                                    "Critical" -> Color.Red
+                                    "High" -> Color.Magenta
+                                    "Medium" -> Color.Yellow
+                                    else -> Color.Green
+                                }
+                            )
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = dateString,
+                            text = task.title,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${task.category} • Due: ${task.dueTime}",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.outline
                         )
                     }
+                    
+                    // Simple progress percentage badge on dashboard
+                    if (task.subtasksText.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(6.dp))
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "Progress: ${task.getProgressPercentage()}%",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
-            IconButton(onClick = onDelete) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete task",
-                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+        }
+
+        // Recent Notes Display
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "📝 Saved Notes",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
                 )
+                TextButton(onClick = { onNavigateToTab(2) }) {
+                    Text("Browse notes", fontSize = 12.sp)
+                }
+            }
+        }
+
+        if (notes.isEmpty()) {
+            item {
+                Text(
+                    text = "No notes created yet. Spark your intelligence using the Notes tab.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
+        } else {
+            item {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(notes.take(4)) { note ->
+                        Box(
+                            modifier = Modifier
+                                .width(140.dp)
+                                .height(100.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    when (note.colorHex) {
+                                        "Blue" -> Color(0xFFDBEAFE).copy(alpha = 0.8f)
+                                        "Mint" -> Color(0xFFD1FAE5).copy(alpha = 0.8f)
+                                        "Lavender" -> Color(0xFFEDE9FE).copy(alpha = 0.8f)
+                                        "Peach" -> Color(0xFFFFEDD5).copy(alpha = 0.8f)
+                                        "Amber" -> Color(0xFFFEF3C7).copy(alpha = 0.8f)
+                                        else -> MaterialTheme.colorScheme.surfaceVariant
+                                    }
+                                )
+                                .clickable { onNavigateToTab(2) }
+                                .padding(10.dp)
+                        ) {
+                            Column {
+                                Text(
+                                    text = note.title,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = Color.Black,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = note.content,
+                                    fontSize = 10.sp,
+                                    color = Color.DarkGray,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun NotesWorkspace(
-    notes: List<Note>,
-    onEditNote: (Note) -> Unit,
-    onDeleteNote: (Note) -> Unit,
-    onTriggerAiSummary: (Note) -> Unit
+fun QuickActionPill(
+    icon: ImageVector,
+    label: String,
+    bg: Color,
+    onClick: () -> Unit
 ) {
-    if (notes.isEmpty()) {
-        EmptyPlaceholder(
-            icon = Icons.Default.Star,
-            title = "Notes environment is empty",
-            subtitle = "Tap the bottom-right action icon to add rich notes. Tap the AI Spark icon on notes to auto-summarize and generate checklist schedule tasks instantly!"
-        )
-    } else {
-        val configuration = LocalConfiguration.current
-        val isLandscape = configuration.screenWidthDp > 600
-        val gridCells = if (isLandscape) GridCells.Fixed(3) else GridCells.Fixed(2)
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(imageVector = icon, contentDescription = label, tint = Color.Black, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(text = label, color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+    }
+}
 
-        LazyVerticalGrid(
-            columns = gridCells,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+// ==========================================
+// 2. ADVANCED TASK MANAGEMENT (TODOS GRID)
+// ==========================================
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun TasksWorkspace(
+    viewModel: MainViewModel,
+    tasks: List<Task>,
+    onAddTask: () -> Unit,
+    onEditTask: (Task) -> Unit
+) {
+    var filterTab by remember { mutableStateOf(0) } // 0 = Standard list, 1 = Calendar View, 2 = Eisenhower Quadrants
+    val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Mode Select Bar
+        TabRow(
+            selectedTabIndex = filterTab,
+            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
         ) {
-            items(notes, key = { it.id }) { note ->
-                NoteCard(
-                    note = note,
-                    onClick = { onEditNote(note) },
-                    onDelete = { onDeleteNote(note) },
-                    onTriggerAiSummary = { onTriggerAiSummary(note) }
+            Tab(selected = filterTab == 0, onClick = { filterTab = 0 }) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Menu, "List", Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Workspace", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Tab(selected = filterTab == 1, onClick = { filterTab = 1 }) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.DateRange, "Calendar", Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Calendar Board", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Tab(selected = filterTab == 2, onClick = { filterTab = 2 }) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.ThumbUp, "Matrix", Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Eisenhower", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // Horizontal Category Chips
+        CategorySelectorsBar(
+            selectedTag = selectedTag,
+            onTagSelected = { viewModel.setTag(it) }
+        )
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when (filterTab) {
+                0 -> {
+                    // Task Lists divided by Complete & Incomplete status
+                    if (tasks.isEmpty()) {
+                        EmptyPlaceholder(
+                            icon = Icons.Default.CheckCircle,
+                            title = "Task List is clear",
+                            subtitle = "Tap add button below to plan out your high importance meetings, milestones or routine items."
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            item {
+                                Text("In Progress Schedules", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                            }
+                            items(tasks.filter { !it.isCompleted }) { task ->
+                                ComplexTaskCard(
+                                    task = task,
+                                    onToggle = { viewModel.toggleTask(task) },
+                                    onClick = { onEditTask(task) },
+                                    onDelete = { viewModel.deleteTask(task) },
+                                    onToggleSubtask = { index ->
+                                        val subtasks = task.getSubtasks().toMutableList()
+                                        val old = subtasks[index]
+                                        subtasks[index] = old.copy(isChecked = !old.isChecked)
+                                        val updatedText = Task.serializeSubtasks(subtasks)
+                                        viewModel.updateTask(task.copy(subtasksText = updatedText))
+                                    }
+                                )
+                            }
+
+                            val completedTasks = tasks.filter { it.isCompleted }
+                            if (completedTasks.isNotEmpty()) {
+                                item {
+                                    Text("Archived Complete (${completedTasks.size})", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp))
+                                }
+                                items(completedTasks) { task ->
+                                    ComplexTaskCard(
+                                        task = task,
+                                        onToggle = { viewModel.toggleTask(task) },
+                                        onClick = { onEditTask(task) },
+                                        onDelete = { viewModel.deleteTask(task) },
+                                        onToggleSubtask = { index ->
+                                            val subtasks = task.getSubtasks().toMutableList()
+                                            val old = subtasks[index]
+                                            subtasks[index] = old.copy(isChecked = !old.isChecked)
+                                            val updatedText = Task.serializeSubtasks(subtasks)
+                                            viewModel.updateTask(task.copy(subtasksText = updatedText))
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                1 -> CalendarInteractiveView(tasks = tasks, onSelectTask = onEditTask)
+                2 -> EisenhowerMatrixBoard(tasks = tasks, onSelectTask = onEditTask)
+            }
+        }
+
+        // Bottom Add Floating Action Bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Button(
+                onClick = onAddTask,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.testTag("add_task_floating_secondary")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Task")
+                Spacer(Modifier.width(6.dp))
+                Text("Compose Schedule", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun CategorySelectorsBar(selectedTag: String, onTagSelected: (String) -> Unit) {
+    val items = listOf("All", "Work", "Personal", "Ideas", "Urgent")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        items.forEach { text ->
+            val sel = text == selectedTag
+            FilterChip(
+                selected = sel,
+                onClick = { onTagSelected(text) },
+                label = { Text(text, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ComplexTaskCard(
+    task: Task,
+    onToggle: () -> Unit,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleSubtask: (Int) -> Unit
+) {
+    val progress = task.getProgressPercentage()
+    val subtasks = task.getSubtasks()
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (task.isCompleted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            else MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+                Checkbox(
+                    checked = task.isCompleted,
+                    onCheckedChange = { onToggle() },
+                    modifier = Modifier.size(24.dp)
                 )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = task.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        textDecoration = if (task.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                        color = if (task.isCompleted) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface
+                    )
+                    if (task.noteText.isNotEmpty()) {
+                        Text(
+                            text = task.noteText,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.outline,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+                
+                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Drop Task",
+                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Metatags, Priority level and Calendar Date info
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Priority Badge
+                Box(
+                    modifier = Modifier
+                        .background(
+                            when (task.priority) {
+                                "Critical" -> Color(0xFFFFDAD9)
+                                "High" -> Color(0xFFFFDDB3)
+                                "Medium" -> Color(0xFFE0E7FF)
+                                else -> Color(0xFFD2E8D4)
+                            },
+                            shape = RoundedCornerShape(6.dp)
+                        )
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = task.priority.uppercase(),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp,
+                        color = Color.Black
+                    )
+                }
+
+                // Category & Tag badges
+                Box(
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = task.category,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+
+                Spacer(Modifier.weight(1f))
+
+                if (task.dueDateLong > 0L) {
+                    val formatted = SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(task.dueDateLong))
+                    Text(
+                        text = "⏳ $formatted ${task.dueTime}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
+            // Subtask checklists expansion block
+            if (subtasks.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.height(8.dp))
+                
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Checklist Subtasks ($progress%)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                
+                Spacer(Modifier.height(4.dp))
+                
+                subtasks.forEachIndexed { index, sub ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggleSubtask(index) }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (sub.isChecked) Icons.Default.CheckCircle else Icons.Default.Star,
+                            contentDescription = "subtask",
+                            modifier = Modifier.size(14.dp),
+                            tint = if (sub.isChecked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = sub.text,
+                            fontSize = 12.sp,
+                            textDecoration = if (sub.isChecked) TextDecoration.LineThrough else TextDecoration.None,
+                            color = if (sub.isChecked) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 2.a INTERACTIVE CALENDAR BOARD FRAGMENT
+@Composable
+fun CalendarInteractiveView(tasks: List<Task>, onSelectTask: (Task) -> Unit) {
+    val cal = Calendar.getInstance()
+    val todayDay = cal.get(Calendar.DAY_OF_MONTH)
+    
+    // Simple calendar layout starting this week
+    val weekDays = remember {
+        val list = mutableListOf<Date>()
+        cal.set(Calendar.DAY_OF_MONTH, todayDay - 3)
+        (0..7).forEach { _ ->
+            list.add(cal.time)
+            cal.add(Calendar.DAY_OF_MONTH, 1)
+        }
+        list
+    }
+    
+    var selectedDate by remember { mutableStateOf(Date()) }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Weekly Schedule Timeline", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Spacer(Modifier.height(8.dp))
+        
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            weekDays.forEach { date ->
+                val simpleDate = SimpleDateFormat("dd", Locale.getDefault()).format(date)
+                val simpleWeekDay = SimpleDateFormat("EEE", Locale.getDefault()).format(date).take(2)
+                val isSel = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(date) == 
+                               SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(selectedDate)
+                
+                Box(
+                    modifier = Modifier
+                        .background(
+                            if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable { selectedDate = date }
+                        .padding(8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = simpleWeekDay,
+                            fontSize = 9.sp,
+                            color = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.outline
+                        )
+                        Text(
+                            text = simpleDate,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = "Milestones Due on this date:",
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.outline
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // filter tasks matching selected date (using simple format matcher)
+        val selectedStr = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(selectedDate)
+        val matches = tasks.filter { task ->
+            task.dueDateLong > 0L && SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date(task.dueDateLong)) == selectedStr
+        }
+
+        if (matches.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Zero schedules or deadlines due today.", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(matches) { task ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { onSelectTask(task) }
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.DateRange, contentDescription = "Due item", tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(task.title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Time slot: ${task.dueTime} • Category: ${task.category}", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 2.b EISENHOWER DECISION QUADRANTS MATRIX
+@Composable
+fun EisenhowerMatrixBoard(tasks: List<Task>, onSelectTask: (Task) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text("Eisenhower Priority Quadrants", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text("Sort items clearly based on urgency rules.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+        
+        Spacer(Modifier.height(12.dp))
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Quadrant 1: Critical Tasks
+            QuadrantContainer(
+                title = "🔥 IMPORTANT & URGENT (Do first)",
+                bgColor = Color(0xFFFFDAD9),
+                titleColor = Color(0xFF410002),
+                tasksList = tasks.filter { it.priority == "Critical" && !it.isCompleted },
+                onSelect = onSelectTask
+            )
+
+            // Quadrant 2: High priority
+            QuadrantContainer(
+                title = "📅 IMPORTANT & NOT URGENT (Plan next)",
+                bgColor = Color(0xFFFFECCC),
+                titleColor = Color(0xFF5E2B00),
+                tasksList = tasks.filter { it.priority == "High" && !it.isCompleted },
+                onSelect = onSelectTask
+            )
+
+            // Quadrant 3: Medium priority
+            QuadrantContainer(
+                title = "🤝 DELEGATE (Urgent but low priority)",
+                bgColor = Color(0xFFE0E7FF),
+                titleColor = Color(0xFF3730A3),
+                tasksList = tasks.filter { it.priority == "Medium" && !it.isCompleted },
+                onSelect = onSelectTask
+            )
+
+            // Quadrant 4: Low priority
+            QuadrantContainer(
+                title = "🗑️ ELIMINATE / MOCK IDEAS",
+                bgColor = Color(0xFFF1F5F9),
+                titleColor = Color(0xFF334155),
+                tasksList = tasks.filter { it.priority == "Low" && !it.isCompleted },
+                onSelect = onSelectTask
+            )
+        }
+    }
+}
+
+@Composable
+fun ColumnScope.QuadrantContainer(
+    title: String,
+    bgColor: Color,
+    titleColor: Color,
+    tasksList: List<Task>,
+    onSelect: (Task) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(bgColor)
+            .padding(10.dp)
+    ) {
+        Column {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = titleColor)
+            Spacer(Modifier.height(4.dp))
+            if (tasksList.isEmpty()) {
+                Text("Zero tasks in this sector.", fontSize = 11.sp, color = titleColor.copy(alpha = 0.5f))
+            } else {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(tasksList) { task ->
+                        Box(
+                            modifier = Modifier
+                                .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
+                                .clickable { onSelect(task) }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(task.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// 3. NOTE TAKING WORKSPACE
+// ==========================================
+@Composable
+fun NotesWorkspace(
+    viewModel: MainViewModel,
+    notes: List<Note>,
+    onAddNote: () -> Unit,
+    onEditNote: (Note) -> Unit,
+    onDrawNotes: () -> Unit
+) {
+    val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Your Creative Canvas", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+            Row {
+                IconButton(onClick = onDrawNotes) {
+                    Icon(Icons.Default.Face, contentDescription = "Draw pad sketch", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+
+        // Horizontal tag filters
+        CategorySelectorsBar(
+            selectedTag = selectedTag,
+            onTagSelected = { viewModel.setTag(it) }
+        )
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (notes.isEmpty()) {
+                EmptyPlaceholder(
+                    icon = Icons.Default.Edit,
+                    title = "Your Knowledge Base is blank",
+                    subtitle = "Store snippets, sketch ideas, and activate Gemini AI summaries to extract milestones in seconds."
+                )
+            } else {
+                val isLandscape = LocalConfiguration.current.screenWidthDp > 600
+                val cols = if (isLandscape) 3 else 2
+                
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(cols),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(notes) { note ->
+                        AdvancedNoteCard(
+                            note = note,
+                            onClick = { onEditNote(note) },
+                            onDelete = { viewModel.deleteNote(note) },
+                            onTriggerAi = { viewModel.summarizeAndGenerateTasksFromNote(note) }
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Button(
+                onClick = onAddNote,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Note")
+                Spacer(Modifier.width(6.dp))
+                Text("Draft Note", fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -490,35 +1545,25 @@ fun NotesWorkspace(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun NoteCard(
+fun AdvancedNoteCard(
     note: Note,
     onClick: () -> Unit,
     onDelete: () -> Unit,
-    onTriggerAiSummary: () -> Unit
+    onTriggerAi: () -> Unit
 ) {
     val isDark = isSystemInDarkTheme()
     val noteColors = getNoteCardColors(note.colorHex, isDark)
-    
-    // Calculate checklist information
-    val subtasks = note.getSubtasks()
-    val totalSubtasks = subtasks.size
-    val completedSubtasks = subtasks.count { it.isChecked }
+    val parsedSubtasks = note.getSubtasks()
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("note_card_${note.id}")
-            .combinedClickable(
-                onClick = onClick
-            ),
+            .combinedClickable(onClick = onClick),
         colors = noteColors,
+        shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp)
-        ) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -527,100 +1572,70 @@ fun NoteCard(
                 Text(
                     text = note.title,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
+                    fontSize = 14.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
                 
-                // AI Spark badge trigger if note content exists
-                if (note.content.isNotBlank()) {
+                if (note.content.isNotEmpty()) {
                     IconButton(
-                        onClick = onTriggerAiSummary,
+                        onClick = onTriggerAi,
                         modifier = Modifier.size(24.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Star,
-                            contentDescription = "Trigger AI Copywriter Summarize",
-                            tint = if (isDark) Color(0xFFFFD700) else Color(0xFFC5A000),
-                            modifier = Modifier.size(20.dp)
+                            contentDescription = "Gemini Spark",
+                            tint = if (isDark) Color(0xFFFFD700) else Color(0xFFC5A000)
                         )
                     }
                 }
             }
             
             Spacer(Modifier.height(6.dp))
-
             Text(
                 text = note.content,
-                fontSize = 13.sp,
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 18.sp,
-                modifier = Modifier.weight(1f, fill = false)
+                fontSize = 12.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
             )
 
-            // Render Checklist stats if present
-            if (totalSubtasks > 0) {
+            // Render miniature checklist counts if present
+            if (parsedSubtasks.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
+                val complete = parsedSubtasks.count { it.isChecked }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .background(
-                            color = Color.Black.copy(alpha = 0.05f),
-                            shape = RoundedCornerShape(4.dp)
-                        )
-                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                        .background(Color.Black.copy(alpha = 0.05f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.List,
-                        contentDescription = "Checklists Status Icon",
-                        modifier = Modifier.size(12.dp),
-                        tint = noteColors.contentColor.copy(alpha = 0.7f)
-                    )
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(10.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "✓ $completedSubtasks/$totalSubtasks tasks",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = noteColors.contentColor.copy(alpha = 0.8f)
-                    )
+                    Text("$complete/${parsedSubtasks.size} subtasks", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
-
+            Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Subtle tag pill nested inside note card
                 Box(
                     modifier = Modifier
-                        .background(
-                            color = noteColors.contentColor.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                        .background(noteColors.contentColor.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
-                    Text(
-                        text = note.tag,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = noteColors.contentColor.copy(alpha = 0.9f)
-                    )
+                    Text(note.tag, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = noteColors.contentColor)
                 }
-
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(24.dp)
-                ) {
+                
+                IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete Note",
+                        contentDescription = "Drop Note",
                         tint = noteColors.contentColor.copy(alpha = 0.6f),
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                 }
             }
@@ -628,278 +1643,689 @@ fun NoteCard(
     }
 }
 
+// ==========================================
+// 4. DAILY PRODUCTIVITY HUB (HABITS & FOCUS)
+// ==========================================
 @Composable
-fun EmptyPlaceholder(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String
+fun DailyHubWorkspace(
+    viewModel: MainViewModel,
+    habits: List<Habit>,
+    tasks: List<Task>,
+    onAddHabit: () -> Unit
 ) {
+    var coreTab by remember { mutableStateOf(0) } // 0 = Habits list tracker, 1 = Pomodoro Mode focus sessions
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        TabRow(
+            selectedTabIndex = coreTab,
+            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
+        ) {
+            Tab(selected = coreTab == 0, onClick = { coreTab = 0 }) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Refresh, "Habits", Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Daily Habits", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Tab(selected = coreTab == 1, onClick = { coreTab = 1 }) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.PlayArrow, "Pomodoro Mode", Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Focus Session", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            when (coreTab) {
+                0 -> {
+                    // Habits tracking panel
+                    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Streaks & Mind Habits", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                            Button(onClick = onAddHabit) {
+                                Icon(Icons.Default.Add, contentDescription = "Add Habit")
+                                Spacer(Modifier.width(6.dp))
+                                Text("New Habit")
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        if (habits.isEmpty()) {
+                            EmptyPlaceholder(
+                                icon = Icons.Default.Refresh,
+                                title = "Your Streak Tracker is empty",
+                                subtitle = "Establish daily exercise milestones or water reminders to compound small activities."
+                            )
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(habits) { habit ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp))
+                                            .padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = habit.isCompletedToday,
+                                            onCheckedChange = { viewModel.toggleHabit(habit) }
+                                        )
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(habit.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text("Category: ${habit.category} • Alarm: ${habit.triggerTime}", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                                        }
+
+                                        // Streak Display Counter Badge
+                                        Row(
+                                            modifier = Modifier
+                                                .background(Color(0xFFFFECE0), RoundedCornerShape(8.dp))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Star, "streak count", tint = Color(0xFFE05B00), modifier = Modifier.size(12.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("${habit.streak}d Streak", fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, color = Color(0xFFE05B00))
+                                        }
+                                        
+                                        IconButton(onClick = { viewModel.deleteHabit(habit) }) {
+                                            Icon(Icons.Default.Clear, contentDescription = "Delete Habit")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                1 -> PomodoroTimerWorkspace(viewModel = viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+fun PomodoroTimerWorkspace(viewModel: MainViewModel) {
+    val workLength by viewModel.pomodoroWorkIntervalMinutes.collectAsStateWithLifecycle()
+    val breakLength by viewModel.pomodoroBreakIntervalMinutes.collectAsStateWithLifecycle()
+    val isFocusActive by viewModel.focusSessionActive.collectAsStateWithLifecycle()
+    val secondsCompleted by viewModel.focusDurationCompletedSeconds.collectAsStateWithLifecycle()
+
+    val totalDurationSeconds = workLength * 60
+    val secondsRemaining = maxOf(0, totalDurationSeconds - secondsCompleted)
+    val minutesLeft = secondsRemaining / 60
+    val secsLeft = secondsRemaining % 60
+    val timeLabel = String.format("%02d:%02d", minutesLeft, secsLeft)
+    
+    val percentageProgress = if (totalDurationSeconds == 0) 1f else secondsCompleted.toFloat() / totalDurationSeconds.toFloat()
+
+    // Timer Ticker controller block
+    LaunchedEffect(isFocusActive) {
+        if (isFocusActive) {
+            while (viewModel.focusSessionActive.value) {
+                delay(1000)
+                viewModel.focusDurationCompletedSeconds.value = viewModel.focusDurationCompletedSeconds.value + 1
+                if (viewModel.focusDurationCompletedSeconds.value >= totalDurationSeconds) {
+                    viewModel.focusSessionActive.value = false
+                    viewModel.focusDurationCompletedSeconds.value = 0
+                }
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = "Empty",
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-        )
+        Text("🎯 POMODORO FOCUS COMPLIANCE", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+        Text("Block notifications & align productive cycles.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+
+        Spacer(Modifier.height(32.dp))
+
+        // Visual Pie Gauge Indicator
+        Box(
+            modifier = Modifier
+                .size(220.dp)
+                .drawBehind {
+                    drawCircle(
+                        color = Color.LightGray.copy(alpha = 0.3f),
+                        style = Stroke(width = 16.dp.toPx())
+                    )
+                    drawArc(
+                        color = Color(0xFFE05B00),
+                        startAngle = -90f,
+                        sweepAngle = percentageProgress * 360f,
+                        useCenter = false,
+                        style = Stroke(width = 16.dp.toPx())
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = timeLabel,
+                    fontSize = 42.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = if (isFocusActive) "Session Active" else "Paused",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+
+        Spacer(Modifier.height(32.dp))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(
+                onClick = { viewModel.focusSessionActive.value = !isFocusActive },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isFocusActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Text(if (isFocusActive) "Pause Timer" else "Start Session")
+            }
+
+            OutlinedButton(
+                onClick = {
+                    viewModel.focusSessionActive.value = false
+                    viewModel.focusDurationCompletedSeconds.value = 0
+                }
+            ) {
+                Text("Reset Focus")
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Divider()
         Spacer(Modifier.height(16.dp))
-        Text(
-            text = title,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = subtitle,
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.outline,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            lineHeight = 18.sp
-        )
+
+        // Duration Adjustment Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Adjust Focus Duration (Minutes):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { viewModel.pomodoroWorkIntervalMinutes.value = maxOf(5, workLength - 5) }) {
+                    Icon(Icons.Default.Clear, contentDescription = "sub")
+                }
+                Text("$workLength min", fontWeight = FontWeight.ExtraBold)
+                IconButton(onClick = { viewModel.pomodoroWorkIntervalMinutes.value = workLength + 5 }) {
+                    Icon(Icons.Default.Add, contentDescription = "add")
+                }
+            }
+        }
     }
 }
 
+// ==========================================
+// 5. CONTROL AND PREFERENCES WORKSPACE
+// ==========================================
 @Composable
-fun PriorityBadge(priority: String) {
-    val (colorBg, colorText) = when (priority) {
-        "High" -> Color(0xFFFFDAD9) to Color(0xFF410002)
-        "Medium" -> Color(0xFFFFDDB3) to Color(0xFF291800)
-        else -> Color(0xFFD2E8D4) to Color(0xFF0F2012)
-    }
-    Box(
+fun ControlAndPreferencesWorkspace(
+    viewModel: MainViewModel,
+    tasks: List<Task>,
+    notes: List<Note>
+) {
+    var pName by remember { mutableStateOf(viewModel.userProfileName.value) }
+    var pBio by remember { mutableStateOf(viewModel.userProfileBio.value) }
+    var pEmoji by remember { mutableStateOf(viewModel.userProfileEmoji.value) }
+    val isDarkTh by viewModel.appThemeDark.collectAsStateWithLifecycle()
+    var pinCodeLock by remember { mutableStateOf(viewModel.appLockPin.value) }
+
+    LazyColumn(
         modifier = Modifier
-            .background(colorBg, RoundedCornerShape(6.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "$priority priority",
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = colorText
-        )
+        item {
+            Text("User Configuration & Security", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+            Text("Setup sync channels, lock PIN values, and AI features reports.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+        }
+
+        // Profile Form edit card
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Personal Identity Credentials", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    
+                    OutlinedTextField(
+                        value = pName,
+                        onValueChange = { pName = it },
+                        label = { Text("Display Label Profile Name") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = pBio,
+                        onValueChange = { pBio = it },
+                        label = { Text("Profile status bio") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = pEmoji,
+                        onValueChange = { pEmoji = it },
+                        label = { Text("Status Avatar Emoji") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
+        // App locks & Vault code parameters
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("🔒 Security Vault Settings", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Enter a 4-digit code below to restrict workspace entrance upon launch.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    
+                    OutlinedTextField(
+                        value = pinCodeLock,
+                        onValueChange = { pinCodeLock = it.take(4) },
+                        label = { Text("Vault Entry PIN (4 digits)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Theme toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Preferred Obsidian Dark Theme", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Switch(
+                            checked = isDarkTh,
+                            onCheckedChange = { viewModel.appThemeDark.value = it }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Action Trigger Button Group
+        item {
+            Button(
+                onClick = {
+                    viewModel.saveProfile(pName, pBio, pEmoji, isDarkTh, pinCodeLock)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Lock and Save Parameters")
+            }
+        }
+
+        // AI COACHING REPORT TRIGGERS
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("📈 AI Productivity Diagnostic Specialist", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                    Text("Request Gemini to parse all categories logs, deadlines performance, and give expert feedback insights.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    
+                    Button(
+                        onClick = {
+                            viewModel.runProductivityAnalysis(tasks, tasks.count { it.isCompleted })
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(Icons.Default.Star, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Draft Productivity Coaching Review")
+                    }
+                }
+            }
+        }
     }
 }
 
-@Composable
-fun TagBadge(tag: String) {
-    val (colorBg, colorText) = when (tag) {
-        "Personal" -> Color(0xFFE0E7FF) to Color(0xFF3730A3)
-        "Work" -> Color(0xFFF3E8FF) to Color(0xFF6B21A8)
-        "Ideas" -> Color(0xFFCCFBF1) to Color(0xFF115E59)
-        "Urgent" -> Color(0xFFFFE4E6) to Color(0xFF9F1239)
-        else -> Color(0xFFF1F5F9) to Color(0xFF334155)
-    }
-    Box(
-        modifier = Modifier
-            .background(colorBg, RoundedCornerShape(6.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
-    ) {
-        Text(
-            text = tag,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = colorText
-        )
-    }
-}
-
-@Composable
-fun getNoteCardColors(colorHex: String, isDark: Boolean): CardColors {
-    val (bg, content) = when (colorHex) {
-        "Slate" -> if (isDark) Color(0xFF1E293B) to Color(0xFFF1F5F9) else Color(0xFFF8FAFC) to Color(0xFF334155)
-        "Blue" -> if (isDark) Color(0xFF1E3A8A) to Color(0xFFEFF6FF) else Color(0xFFDBEAFE) to Color(0xFF1E40AF)
-        "Mint" -> if (isDark) Color(0xFF064E3B) to Color(0xFFECFDF5) else Color(0xFFD1FAE5) to Color(0xFF065F46)
-        "Lavender" -> if (isDark) Color(0xFF4C1D95) to Color(0xFFF5F3FF) else Color(0xFFEDE9FE) to Color(0xFF6D28D9)
-        "Peach" -> if (isDark) Color(0xFF7C2D12) to Color(0xFFFFF7ED) else Color(0xFFFFEDD5) to Color(0xFFC2410C)
-        "Amber" -> if (isDark) Color(0xFF78350F) to Color(0xFFFFFBEB) else Color(0xFFFEF3C7) to Color(0xFFB45309)
-        else -> if (isDark) Color(0xFF334155) to Color(0xFFF1F5F9) else Color(0xFFF1F5F9) to Color(0xFF334155)
-    }
-    return CardDefaults.cardColors(containerColor = bg, contentColor = content)
-}
-
-// ================= DIALOG BUILDERS & EDITORS =================
+// ==========================================
+// MOCK / UTILS OR DIALOG DIALOG CONTROLLERS
+// ==========================================
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TaskEditorDialog(
     task: Task?,
     onDismiss: () -> Unit,
-    onSave: (title: String, desc: String, priority: String, tag: String, dueDate: Long) -> Unit
+    onSave: (
+        title: String,
+        desc: String,
+        priority: String,
+        tag: String,
+        category: String,
+        dueDate: Long,
+        dueTime: String,
+        status: String,
+        subtasks: String,
+        recurring: String,
+        priorityTime: Int,
+        remindOption: Int,
+        depId: Int
+    ) -> Unit
 ) {
     var title by remember { mutableStateOf(task?.title ?: "") }
     var desc by remember { mutableStateOf(task?.noteText ?: "") }
     var priority by remember { mutableStateOf(task?.priority ?: "Medium") }
     var tag by remember { mutableStateOf(task?.tag ?: "Personal") }
+    var category by remember { mutableStateOf(task?.category ?: "Personal") }
     var dueDateLong by remember { mutableStateOf(task?.dueDateLong ?: 0L) }
-    
-    val context = LocalContext.current
-    var isTitleError by remember { mutableStateOf(false) }
+    var dueTime by remember { mutableStateOf(task?.dueTime ?: "12:00 PM") }
+    var status by remember { mutableStateOf(task?.status ?: "Pending") }
+    var recurringOption by remember { mutableStateOf(task?.recurringOption ?: "None") }
+    var estimatedTime by remember { mutableStateOf(task?.estimatedTimeMinutes ?: 30) }
+    var remindBeforeMinutes by remember { mutableStateOf(task?.reminderMinutesBefore ?: -1) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    // Subtask lists support within Task Dialog builder
+    val listItems = remember { mutableStateListOf<Task.Subtask>().apply { addAll(task?.getSubtasks() ?: emptyList()) } }
+    var newSubtaskName by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
+    var isTitleErr by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Card(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(24.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(4.dp)
+                .fillMaxHeight(0.9f)
+                .padding(16.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = if (task == null) "Create New Task" else "Edit Schedule Task",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (task == null) "Add Advanced Task" else "Update Milestone Info",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Clear, contentDescription = "Close")
+                    }
+                }
+
+                Divider()
 
                 OutlinedTextField(
                     value = title,
                     onValueChange = {
                         title = it
-                        isTitleError = it.isBlank()
+                        isTitleErr = it.isBlank()
                     },
                     label = { Text("Task Title *") },
-                    isError = isTitleError,
-                    singleLine = true,
+                    isError = isTitleErr,
                     modifier = Modifier.fillMaxWidth().testTag("task_title_input")
                 )
 
                 OutlinedTextField(
                     value = desc,
                     onValueChange = { desc = it },
-                    label = { Text("Task Note / Context") },
+                    label = { Text("Description Note / Action Items") },
                     maxLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Priority Switcher (High, Medium, Low)
-                Text("Select Priority Level", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("High", "Medium", "Low").forEach { level ->
-                        val isSel = priority == level
-                        OutlinedButton(
-                            onClick = { priority = level },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = if (isSel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
-                            )
-                        ) {
-                            Text(level, fontSize = 12.sp, color = if (isSel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
-                }
-
-                // Tag Label Selector
-                Text("Select Tag Label", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("Work", "Personal", "Ideas", "Urgent").forEach { label ->
-                        val isSel = tag == label
+                // Select Priorities
+                Text("Priority Level Status", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Low", "Medium", "High", "Critical").forEach { level ->
+                        val sel = priority == level
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable { tag = label }
+                                .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { priority = level }
                                 .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = label,
+                                level,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
 
-                // Due Date Select Block
+                // Choose Class Category
+                Text("Workspace Category", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable {
-                            val cal = Calendar.getInstance()
-                            if (dueDateLong > 0L) {
-                                cal.timeInMillis = dueDateLong
-                            }
-                            DatePickerDialog(
-                                context,
-                                { _, year, month, dayOfMonth ->
-                                    val selCal = Calendar.getInstance()
-                                    selCal.set(year, month, dayOfMonth)
-                                    dueDateLong = selCal.timeInMillis
-                                },
-                                cal.get(Calendar.YEAR),
-                                cal.get(Calendar.MONTH),
-                                cal.get(Calendar.DAY_OF_MONTH)
-                            ).show()
-                        }
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.DateRange,
-                        contentDescription = "Select Date",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text("Due Date Time", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                        Text(
-                            text = if (dueDateLong == 0L) "No due date scheduled" else SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(dueDateLong)),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
+                    listOf("Personal", "Work", "Study", "Shopping", "Health", "Finance").forEach { cat ->
+                        val sel = category == cat
+                        FilterChip(
+                            selected = sel,
+                            onClick = { category = cat },
+                            label = { Text(cat, fontSize = 11.sp) }
                         )
                     }
-                    if (dueDateLong > 0L) {
-                        Spacer(Modifier.weight(1f))
-                        IconButton(onClick = { dueDateLong = 0L }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear Due Date", tint = MaterialTheme.colorScheme.outline)
+                }
+
+                // Choose Class labels (Tags)
+                Text("Class Status Labels / Tags", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Urgent", "Fam", "Project", "Family").forEach { label ->
+                        val sel = tag == label
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (sel) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { tag = label }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                label,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (sel) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
 
-                // Dialog Buttons
+                // Time Tracking Estimated Time Selector
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
+                    Text("Time tracking estimate minutes:", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { estimatedTime = maxOf(10, estimatedTime - 10) }) {
+                            Icon(Icons.Default.Clear, "sub")
+                        }
+                        Text("$estimatedTime min", fontWeight = FontWeight.Bold)
+                        IconButton(onClick = { estimatedTime += 10 }) {
+                            Icon(Icons.Default.Add, "add")
+                        }
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            if (title.isBlank()) {
-                                isTitleError = true
-                            } else {
-                                onSave(title, desc, priority, tag, dueDateLong)
+                }
+
+                // Recurring selector
+                Text("Recurring Interval Config", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("None", "Daily", "Weekly", "Monthly").forEach { op ->
+                        val sel = recurringOption == op
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { recurringOption = op }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                op,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // Advanced Due Date Clock picker
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp))
+                        .clickable {
+                            val c = Calendar.getInstance()
+                            DatePickerDialog(
+                                context,
+                                { _, y, m, d ->
+                                    val sel = Calendar.getInstance()
+                                    sel.set(y, m, d)
+                                    dueDateLong = sel.timeInMillis
+                                    
+                                    // Instantly show time picker
+                                    TimePickerDialog(
+                                        context,
+                                        { _, hour, min ->
+                                            val ampm = if (hour >= 12) "PM" else "AM"
+                                            val hourFmt = if (hour % 12 == 0) 12 else hour % 12
+                                            dueTime = String.format("%02d:%02d %s", hourFmt, min, ampm)
+                                        },
+                                        12, 0, false
+                                    ).show()
+                                },
+                                c.get(Calendar.YEAR),
+                                c.get(Calendar.MONTH),
+                                c.get(Calendar.DAY_OF_MONTH)
+                            ).show()
+                        }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.DateRange, contentDescription = "Date", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("Interactive Date Due", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                        Text(
+                            text = if (dueDateLong == 0L) "No deadline assigned"
+                            else SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(dueDateLong)) + " @ $dueTime",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
+                // Nested subtask item checklist creation
+                Spacer(Modifier.height(8.dp))
+                Text("Manage Nested Subtasks checklist", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+
+                if (listItems.isNotEmpty()) {
+                    listItems.forEachIndexed { index, subtask ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = subtask.isChecked, onCheckedChange = { listItems[index] = subtask.copy(isChecked = it) })
+                            Text(subtask.text, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { listItems.removeAt(index) }) {
+                                Icon(Icons.Default.Clear, contentDescription = "drop subtask")
                             }
-                        },
-                        modifier = Modifier.testTag("save_task_button")
-                    ) {
-                        Text("Save Task")
+                        }
                     }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newSubtaskName,
+                        onValueChange = { newSubtaskName = it },
+                        label = { Text("Draft quick checklist component") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = {
+                            if (newSubtaskName.isNotBlank()) {
+                                listItems.add(Task.Subtask(newSubtaskName.trim(), false))
+                                newSubtaskName = ""
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "add subtask")
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        if (title.isBlank()) {
+                            isTitleErr = true
+                        } else {
+                            val serialized = Task.serializeSubtasks(listItems)
+                            onSave(
+                                title,
+                                desc,
+                                priority,
+                                tag,
+                                category,
+                                dueDateLong,
+                                dueTime,
+                                status,
+                                serialized,
+                                recurringOption,
+                                estimatedTime,
+                                remindBeforeMinutes,
+                                0
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("save_task_button")
+                ) {
+                    Text("Save Milestone Info")
                 }
             }
         }
@@ -911,135 +2337,71 @@ fun TaskEditorDialog(
 fun NoteEditorDialog(
     note: Note?,
     onDismiss: () -> Unit,
-    onSave: (title: String, content: String, tag: String, colorHex: String, checklistText: String) -> Unit
+    onSave: (title: String, content: String, tag: String, color: String, checklist: String) -> Unit
 ) {
     var title by remember { mutableStateOf(note?.title ?: "") }
     var content by remember { mutableStateOf(note?.content ?: "") }
     var tag by remember { mutableStateOf(note?.tag ?: "Personal") }
-    var colorHex by remember { mutableStateOf(note?.colorHex ?: "Slate") }
+    var color by remember { mutableStateOf(note?.colorHex ?: "Slate") }
     
-    // Checklist creation builder state
-    val parsedSubtasks = remember { mutableStateListOf<Note.Subtask>().apply { addAll(note?.getSubtasks() ?: emptyList()) } }
-    var newChecklistItemText by remember { mutableStateOf("") }
+    val checklistItems = remember { mutableStateListOf<Note.Subtask>().apply { addAll(note?.getSubtasks() ?: emptyList()) } }
+    var newCheckItem by remember { mutableStateOf("") }
+    var isTitleErr by remember { mutableStateOf(false) }
 
-    var isTitleError by remember { mutableStateOf(false) }
-
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Card(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(24.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(4.dp)
+                .fillMaxHeight(0.9f)
+                .padding(16.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = if (note == null) "Create Rich Note" else "Edit Note Settings",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (note == null) "Compose Rich Note" else "Modify Note Settings",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Clear, contentDescription = "Close")
+                    }
+                }
+
+                Divider()
 
                 OutlinedTextField(
                     value = title,
                     onValueChange = {
                         title = it
-                        isTitleError = it.isBlank()
+                        isTitleErr = it.isBlank()
                     },
                     label = { Text("Note Title *") },
-                    isError = isTitleError,
-                    singleLine = true,
+                    isError = isTitleErr,
                     modifier = Modifier.fillMaxWidth().testTag("note_title_input")
                 )
 
                 OutlinedTextField(
                     value = content,
                     onValueChange = { content = it },
-                    label = { Text("Note Content Body") },
-                    maxLines = 5,
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text("Write content (Markdown headings / links supported)") },
+                    modifier = Modifier.fillMaxWidth().height(150.dp),
+                    maxLines = 10
                 )
 
-                // Embedded Checklist Builder
-                Text("Appended Checklist Subtasks", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
-                
-                if (parsedSubtasks.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 120.dp)
-                            .background(
-                                MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .padding(4.dp)
-                    ) {
-                        LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                            items(parsedSubtasks.size) { index ->
-                                val subtask = parsedSubtasks[index]
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)
-                                ) {
-                                    Checkbox(
-                                        checked = subtask.isChecked,
-                                        onCheckedChange = { isChecked ->
-                                            parsedSubtasks[index] = subtask.copy(isChecked = isChecked)
-                                        },
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(
-                                        text = subtask.text,
-                                        fontSize = 13.sp,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconButton(
-                                        onClick = { parsedSubtasks.removeAt(index) },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
-                                        Icon(Icons.Default.Clear, "Remove subtask", Modifier.size(16.dp))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = newChecklistItemText,
-                        onValueChange = { newChecklistItemText = it },
-                        placeholder = { Text("new checklist item...") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.secondary
-                        )
-                    )
-                    Button(
-                        onClick = {
-                            if (newChecklistItemText.isNotBlank()) {
-                                parsedSubtasks.add(Note.Subtask(newChecklistItemText.trim(), false))
-                                newChecklistItemText = ""
-                            }
-                        },
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Icon(Icons.Default.Add, "Add checklist")
-                    }
-                }
-
-                // Custom Palette color dots
-                Text("Select Ambient Theme Color", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                // Select card colors
+                Text("Select Ambient Palette", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1062,64 +2424,507 @@ fun NoteEditorDialog(
                                 .clip(CircleShape)
                                 .background(primaryColor)
                                 .border(
-                                    width = if (colorHex == colName) 3.dp else 0.dp,
-                                    color = if (colorHex == colName) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                    width = if (color == colName) 3.dp else 0.dp,
+                                    color = if (color == colName) MaterialTheme.colorScheme.onSurface else Color.Transparent,
                                     shape = CircleShape
                                 )
-                                .clickable { colorHex = colName }
+                                .clickable { color = colName }
                         )
                     }
                 }
 
-                // Tag labels
-                Text("Select Note Tag", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+                // Choose label tag
+                Text("Select Tag Label", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("Work", "Personal", "Ideas", "Urgent").forEach { label ->
-                        val isSel = tag == label
+                        val sel = tag == label
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                                .background(if (sel) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant)
                                 .clickable { tag = label }
                                 .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = label,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                            Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (sel) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                // checklist manager inside notes editor is extremely powerful
+                Text("Manage Appended Checklist Items", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                
+                checklistItems.forEachIndexed { index, checkItem ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = checkItem.isChecked, onCheckedChange = { checklistItems[index] = checkItem.copy(isChecked = it) })
+                        Text(checkItem.text, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { checklistItems.removeAt(index) }) {
+                            Icon(Icons.Default.Clear, contentDescription = "drop checklist item")
+                        }
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newCheckItem,
+                        onValueChange = { newCheckItem = it },
+                        label = { Text("Draft check list item") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = {
+                            if (newCheckItem.isNotBlank()) {
+                                checklistItems.add(Note.Subtask(newCheckItem.trim(), false))
+                                newCheckItem = ""
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "add checklist items")
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        if (title.isBlank()) {
+                            isTitleErr = true
+                        } else {
+                            val serialized = Note.serializeSubtasks(checklistItems)
+                            onSave(title, content, tag, color, serialized)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("save_note_button")
+                ) {
+                    Text("Save Content Elements")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HabitCreatorDialog(
+    onDismiss: () -> Unit,
+    onSave: (name: String, category: String, time: String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("Health") }
+    var time by remember { mutableStateOf("08:00 AM") }
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Build Daily Habit Tracker") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Action Metric Name (e.g., Exercise)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text("Habit Class Sector", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Health", "Mind", "Study", "Work").forEach { cat ->
+                        val sel = category == cat
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { category = cat }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(cat, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                // Time picker triggers
+                OutlinedTextField(
+                    value = time,
+                    onValueChange = { time = it },
+                    label = { Text("Trigger time alarm") },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                TimePickerDialog(
+                                    context,
+                                    { _, hr, min ->
+                                        val ampm = if (hr >= 12) "PM" else "AM"
+                                        val hrNormalized = if (hr % 12 == 0) 12 else hr % 12
+                                        time = String.format("%02d:%02d %s", hrNormalized, min, ampm)
+                                    },
+                                    8, 0, false
+                                ).show()
+                            }
+                        ) {
+                            Icon(Icons.Default.DateRange, contentDescription = "Pick alarm time")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (name.isNotBlank()) {
+                        onSave(name.trim(), category, time)
+                    }
+                }
+            ) { Text("Create Habit") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Dismiss") }
+        }
+    )
+}
+
+// ----------------------------------------------------
+// 5. DRAWING CANVAS DRAWPAD DIALOG COMPONENT
+// ----------------------------------------------------
+@Composable
+fun DrawingCanvasDialog(
+    onDismiss: () -> Unit,
+    onSaveCanvas: (title: String, payload: String) -> Unit
+) {
+    var sketchName by remember { mutableStateOf("Creative Blueprint") }
+    val paths = remember { mutableStateListOf<Path>() }
+    var currentPath by remember { mutableStateOf<Path?>(null) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.85f)
+                .padding(8.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Interactive Sketch Canvas Pad", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                
+                OutlinedTextField(
+                    value = sketchName,
+                    onValueChange = { sketchName = it },
+                    label = { Text("Canvas Label Title") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                // The whiteboard canvas element
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color.Gray, RoundedCornerShape(12.dp))
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { offset ->
+                                    val newPath = Path().apply { moveTo(offset.x, offset.y) }
+                                    currentPath = newPath
+                                    paths.add(newPath)
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    currentPath?.lineTo(change.position.x, change.position.y)
+                                    // Trigger recomposition explicitly by removing and adding path
+                                    if (currentPath != null) {
+                                        val idx = paths.size - 1
+                                        if (idx >= 0) {
+                                            paths[idx] = currentPath!!
+                                        }
+                                    }
+                                },
+                                onDragEnd = {
+                                    currentPath = null
+                                }
+                            )
+                        }
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        paths.forEach { path ->
+                            drawPath(
+                                path = path,
+                                color = Color.Black,
+                                style = Stroke(width = 6f)
                             )
                         }
                     }
                 }
 
-                // Save cancel actions
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
+                    TextButton(onClick = { paths.clear() }) { Text("Clear Canvas") }
                     Spacer(Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (title.isBlank()) {
-                                isTitleError = true
-                            } else {
-                                val checklistString = Note.serializeSubtasks(parsedSubtasks)
-                                onSave(title, content, tag, colorHex, checklistString)
-                            }
-                        },
-                        modifier = Modifier.testTag("save_note_button")
+                            val stringPayload = "Scribbled canvas drawing blueprint saved containing ${paths.size} vector paths strokes."
+                            onSaveCanvas(sketchName, stringPayload)
+                        }
                     ) {
-                        Text("Save Note")
+                        Text("Save Drawing Notes")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------
+// 6. VOICE SIMULATED COMMAND PARSER DIALOG
+// ----------------------------------------------------
+@Composable
+fun VoiceCommandDialog(
+    onDismiss: () -> Unit,
+    onExecuteVoiceCommand: (phrase: String) -> Unit
+) {
+    var rawPhrase by remember { mutableStateOf("") }
+    var isRecording by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, tint = Color.Red)
+                Spacer(Modifier.width(8.dp))
+                Text("AI Speech-to-Text & Command Line")
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Speak or enter natural language commands to automatically format tasks or thoughts.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                
+                OutlinedTextField(
+                    value = rawPhrase,
+                    onValueChange = { rawPhrase = it },
+                    placeholder = { Text("Example: 'Create task Buy groceries tomorrow'") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+                
+                Button(
+                    onClick = {
+                        isRecording = !isRecording
+                        if (isRecording) {
+                            rawPhrase = "Create task Submit final year engineering presentation tomorrow"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isRecording) Color.Red else MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = if (isRecording) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isRecording) "🛑 Mic active... click to transcribe mock" else "🎙️ Start Voice Command Mic Input")
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (rawPhrase.isNotBlank()) {
+                        onExecuteVoiceCommand(rawPhrase)
+                    }
+                }
+            ) { Text("Execute Command") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+// ----------------------------------------------------
+// 7. OCR DOCUMENT SCANNER MOCK DIALOG
+// ----------------------------------------------------
+@Composable
+fun OcrScannerDialog(
+    onDismiss: () -> Unit,
+    onSaveOcrText: (title: String, payload: String) -> Unit
+) {
+    var payloadText by remember { mutableStateOf("Processing scanner...") }
+    var isScanningMode by remember { mutableStateOf(true) }
+
+    LaunchedEffect(isScanningMode) {
+        if (isScanningMode) {
+            delay(2000)
+            payloadText = """
+                SYSTEM LOGS OR SCAN RESULT:
+                - Target title: Machine Learning lecture syllabus
+                - Core tasks identified:
+                  1. Download datasets from Keggle.
+                  2. Construct regression modeling weights.
+                  3. Send thesis outline before Sunday noon.
+            """.trimIndent()
+            isScanningMode = false
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("OCR Handwritten Scanned Snippets", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                
+                if (isScanningMode) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                            .background(Color.Black, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = Color.White)
+                            Spacer(Modifier.height(12.dp))
+                            Text("Analyzing target print coordinates...", color = Color.White, fontSize = 12.sp)
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = payloadText,
+                        onValueChange = { payloadText = it },
+                        label = { Text("OCR Transcribbed coordinates payload") },
+                        modifier = Modifier.fillMaxWidth().height(160.dp),
+                        maxLines = 8
+                    )
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            onSaveOcrText("OCR Scanned Topic", payloadText)
+                        },
+                        enabled = !isScanningMode
+                    ) {
+                        Text("Save Scanned Content")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------
+// 8. AI STATE RESPONSE MODALS
+// ----------------------------------------------------
+@Composable
+fun AiResponseDialog(
+    aiState: AiState,
+    onDismiss: () -> Unit,
+    onImportTasks: (List<String>) -> Unit
+) {
+    Dialog(onDismissRequest = { if (aiState !is AiState.Loading) onDismiss() }) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFD700), modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Gemini AI Copilot Analyzer", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
+                }
+
+                Divider()
+
+                when (aiState) {
+                    is AiState.Loading -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(16.dp))
+                            Text("Analyzing semantic variables...", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Connecting securely to Gemini LLM endpoint", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                        }
+                    }
+                    is AiState.Success -> {
+                        Text("Note Summarization Report:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
+                        Text(aiState.summary, fontSize = 14.sp, lineHeight = 20.sp)
+                        
+                        if (aiState.tasks.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Extracted Action Milestones:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                            aiState.tasks.forEach { t ->
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(t, fontSize = 13.sp)
+                                }
+                            }
+
+                            Spacer(Modifier.height(12.dp))
+                            Button(
+                                onClick = { onImportTasks(aiState.tasks) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Import extracted items into Tasks list")
+                            }
+                        }
+                    }
+                    is AiState.WritingAssistantSuccess -> {
+                        Text("Original Draft Text:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                        Text(aiState.originalText, fontSize = 13.sp)
+
+                        Spacer(Modifier.height(8.dp))
+                        Text("Gemini Proposed Rewrite Response:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        Text(aiState.revisedText, fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp)
+                    }
+                    is AiState.PlannerSuccess -> {
+                        Text("Generative Daily Planner schedule agenda:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(aiState.formattedSchedule, fontSize = 14.sp, fontFamily = FontFamily.Monospace, lineHeight = 20.sp)
+                    }
+                    is AiState.ProductivityAnalysis -> {
+                        Text("User Productivity Rating Score: ${aiState.score}/100", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("Personal coaching insights analysis:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                        Text(aiState.insights, fontSize = 14.sp, lineHeight = 20.sp)
+                    }
+                    is AiState.Error -> {
+                        Text("Copilot encountered a problem context:", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                        Text(aiState.message, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                    else -> {}
+                }
+
+                if (aiState !is AiState.Loading) {
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Dismiss Report")
                     }
                 }
             }
@@ -1128,234 +2933,47 @@ fun NoteEditorDialog(
 }
 
 @Composable
-fun AiCopilotDialog(
-    aiState: AiState,
-    onDismiss: () -> Unit,
-    onSyncTasks: (extractedTasks: List<String>, tag: String) -> Unit
-) {
-    Dialog(onDismissRequest = { if (aiState !is AiState.Loading) onDismiss() }) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Star,
-                        contentDescription = "Spark",
-                        tint = Color(0xFFD4AF37),
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "AI Note Copilot",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Divider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                when (aiState) {
-                    is AiState.Loading -> {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            CircularProgressIndicator()
-                            Spacer(Modifier.height(16.dp))
-                            Text(
-                                text = "Gemini is scanning note topics...",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Extracting key insights & suggested tasks",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    }
-                    is AiState.Success -> {
-                        // User-selected tasks state
-                        val extractedTasks = aiState.tasks
-                        val selectedExtractedTasks = remember { mutableStateListOf<String>().apply { addAll(extractedTasks) } }
-                        var targetTag by remember { mutableStateOf("Ideas") }
-
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 320.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            item {
-                                Text(
-                                    text = "Analyzing: \"${aiState.noteTitle}\"",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = "AI Summary:",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = aiState.summary,
-                                    fontSize = 13.sp,
-                                    lineHeight = 18.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier
-                                        .background(
-                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                            RoundedCornerShape(8.dp)
-                                        )
-                                        .padding(10.dp)
-                                )
-                                Spacer(Modifier.height(12.dp))
-                                Text(
-                                    text = "Extracted Action Tasks:",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                            }
-                            
-                            if (extractedTasks.isEmpty()) {
-                                item {
-                                    Text(
-                                        text = "No clear todo tasks found in this note text. Add action details to your notes to auto-extract items.",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.outline
-                                    )
-                                }
-                            } else {
-                                items(extractedTasks) { itemText ->
-                                    val isChecked = selectedExtractedTasks.contains(itemText)
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                if (isChecked) selectedExtractedTasks.remove(itemText)
-                                                else selectedExtractedTasks.add(itemText)
-                                            }
-                                            .padding(vertical = 4.dp)
-                                    ) {
-                                        Checkbox(
-                                            checked = isChecked,
-                                            onCheckedChange = {
-                                                if (it == true) {
-                                                    selectedExtractedTasks.add(itemText)
-                                                } else {
-                                                    selectedExtractedTasks.remove(itemText)
-                                                }
-                                            }
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(itemText, fontSize = 13.sp)
-                                    }
-                                }
-                            }
-
-                            item {
-                                Spacer(Modifier.height(12.dp))
-                                Text("Assign Extracted Tasks Tag", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    listOf("Work", "Personal", "Ideas", "Urgent").forEach { label ->
-                                        val isSel = targetTag == label
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(if (isSel) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant)
-                                                .clickable { targetTag = label }
-                                                .padding(vertical = 6.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = label,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isSel) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Sync button actions
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(onClick = onDismiss) {
-                                Text("Skip")
-                            }
-                            if (selectedExtractedTasks.isNotEmpty()) {
-                                Spacer(Modifier.width(8.dp))
-                                Button(
-                                    onClick = { onSyncTasks(selectedExtractedTasks.toList(), targetTag) }
-                                ) {
-                                    Icon(Icons.Default.Check, "Sync Icon")
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Sync to Todos (${selectedExtractedTasks.size})")
-                                }
-                            }
-                        }
-                    }
-                    is AiState.Error -> {
-                        Column {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = "Error Info",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(36.dp)
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = "Analysis Integration Error",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = aiState.message,
-                                fontSize = 12.sp,
-                                lineHeight = 16.sp,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                            Spacer(Modifier.height(16.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
-                            ) {
-                                Button(onClick = onDismiss) {
-                                    Text("Close")
-                                }
-                            }
-                        }
-                    }
-                    else -> {}
-                }
-            }
-        }
+fun EmptyPlaceholder(icon: ImageVector, title: String, subtitle: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+            modifier = Modifier.size(64.dp)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 15.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = subtitle,
+            color = MaterialTheme.colorScheme.outline,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center
+        )
     }
+}
+
+@Composable
+fun getNoteCardColors(colorHex: String, isDark: Boolean): CardColors {
+    val (bg, content) = when (colorHex) {
+        "Slate" -> if (isDark) Color(0xFF1E293B) to Color(0xFFF1F5F9) else Color(0xFFF8FAFC) to Color(0xFF334155)
+        "Blue" -> if (isDark) Color(0xFF1E3A8A) to Color(0xFFDBEAFE) else Color(0xFFEFF6FF) to Color(0xFF1E40AF)
+        "Mint" -> if (isDark) Color(0xFF064E3B) to Color(0xFFD1FAE5) else Color(0xFFECFDF5) to Color(0xFF065F46)
+        "Lavender" -> if (isDark) Color(0xFF3B0764) to Color(0xFFEDE9FE) else Color(0xFFF5F3FF) to Color(0xFF6D28D9)
+        "Peach" -> if (isDark) Color(0xFF7C2D12) to Color(0xFFFFEDD5) else Color(0xFFFFF7ED) to Color(0xFFC2410C)
+        "Amber" -> if (isDark) Color(0xFF78350F) to Color(0xFFFEF3C7) else Color(0xFFFFFBEB) to Color(0xFFB45309)
+        else -> if (isDark) Color(0xFF1E293B) to Color(0xFFF1F5F9) else Color(0xFFF8FAFC) to Color(0xFF334155)
+    }
+    return CardDefaults.cardColors(containerColor = bg, contentColor = content)
 }

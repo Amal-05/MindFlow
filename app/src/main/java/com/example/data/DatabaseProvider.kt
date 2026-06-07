@@ -25,7 +25,7 @@ object DatabaseProvider {
     fun getRepository(context: Context): TaskAndNoteRepository {
         return repoInstance ?: synchronized(this) {
             val db = getDatabase(context)
-            val instance = TaskAndNoteRepository(db.taskDao(), db.noteDao())
+            val instance = TaskAndNoteRepository(db.taskDao(), db.noteDao(), db.habitDao())
             repoInstance = instance
             instance
         }

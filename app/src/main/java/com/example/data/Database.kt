@@ -36,8 +36,24 @@ interface NoteDao {
     suspend fun deleteNote(note: Note)
 }
 
-@Database(entities = [Task::class, Note::class], version = 1, exportSchema = false)
+@Dao
+interface HabitDao {
+    @Query("SELECT * FROM habits ORDER BY createdAt DESC")
+    fun getAllHabits(): Flow<List<Habit>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHabit(habit: Habit)
+
+    @Delete
+    suspend fun deleteHabit(habit: Habit)
+    
+    @Query("UPDATE habits SET isCompletedToday = :isCompleted, streak = :streak, lastCompletedDate = :date WHERE id = :id")
+    suspend fun updateHabitCompletion(id: Int, isCompleted: Boolean, streak: Int, date: String)
+}
+
+@Database(entities = [Task::class, Note::class, Habit::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun taskDao(): TaskDao
     abstract fun noteDao(): NoteDao
+    abstract fun habitDao(): HabitDao
 }
