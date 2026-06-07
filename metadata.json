@@ -1,0 +1,6 @@
+{
+  "name": "Notes & Tasks",
+  "description": "An advanced Todo and Notes app featuring rich tags, category filtering, subtask checklists, priority levels, and smart AI Note Summarization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
