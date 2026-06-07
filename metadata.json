@@ -1,6 +1,6 @@
 {
-  "name": "Notes & Tasks",
-  "description": "An advanced Todo and Notes app featuring rich tags, category filtering, subtask checklists, priority levels, and smart AI Note Summarization.",
+  "name": "Mind Flow",
+  "description": "An elegant productivity and mind-mapping hub that empowers you to master tasks, design sketches, capture voice transcriptions, scan documents, schedule habits, and coordinate study sessions within a streamlined dashboard.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
