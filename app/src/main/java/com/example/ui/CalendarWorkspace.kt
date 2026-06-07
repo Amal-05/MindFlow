@@ -299,7 +299,7 @@ fun CalendarWorkspace(
 @Composable
 fun VerticalGridForCalendar(
     items: List<Calendar?>,
-    modifier = Modifier,
+    modifier: Modifier = Modifier,
     content: @Composable (Calendar?) -> Unit
 ) {
     Column(modifier = modifier) {

@@ -8,6 +8,7 @@ data class Task(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
     val noteText: String = "",
+    val userEmail: String = "local",
     val isCompleted: Boolean = false,
     val priority: String = "Medium", // "Low", "Medium", "High", "Critical"
     val tag: String = "Personal",     // "Urgent", "Exam", "Project", "Family", "Personal"

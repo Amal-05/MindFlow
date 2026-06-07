@@ -118,7 +118,7 @@ fun PreferencesWorkspace(
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 16.dp, top = 4.dp)
+                        modifier = Modifier.padding(horizontal = 16.dp).padding(top = 4.dp)
                     )
                     Spacer(Modifier.height(10.dp))
                     Button(
@@ -184,9 +184,7 @@ fun PreferencesWorkspace(
                             }
                             Button(
                                 onClick = {
-                                    viewModel.userProfileName.value = editingName
-                                    viewModel.userProfileBio.value = editingBio
-                                    viewModel.userProfileEmoji.value = editingEmoji
+                                    viewModel.saveProfile(editingName, editingBio, editingEmoji, isDarkTheme, lockPin)
                                     isEditingProfile = false
                                 },
                                 shape = RoundedCornerShape(12.dp)
@@ -194,6 +192,64 @@ fun PreferencesWorkspace(
                                 Text("Save Profile")
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // Google Account Session Card
+        val activeEmail by viewModel.activeUserEmail.collectAsStateWithLifecycle()
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), RoundedCornerShape(24.dp)),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
+            )
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AccountBox,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (activeEmail == "local") "Local Offline Workspace" else "Google Account Session",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = if (activeEmail == "local") "Sign in to isolate dynamic cloud tasks" else activeEmail,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                
+                TextButton(
+                    onClick = {
+                        viewModel.signOutCurrentAccount()
+                    }
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = if (activeEmail == "local") Icons.Default.KeyboardArrowUp else Icons.Default.ExitToApp,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (activeEmail == "local") "Link" else "Sign Out",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
                     }
                 }
             }
@@ -330,7 +386,7 @@ fun PreferencesWorkspace(
                     }
                     Switch(
                         checked = isDarkTheme,
-                        onCheckedChange = { viewModel.appThemeDark.value = it }
+                        onCheckedChange = { viewModel.saveProfile(pName, pBio, pEmoji, it, lockPin) }
                     )
                 }
 
@@ -361,8 +417,7 @@ fun PreferencesWorkspace(
 
                         Button(
                             onClick = {
-                                viewModel.appLockPin.value = draftPin
-                                viewModel.appLockUnlocked.value = draftPin.isEmpty()
+                                viewModel.saveProfile(pName, pBio, pEmoji, isDarkTheme, draftPin)
                             },
                             shape = RoundedCornerShape(12.dp)
                         ) {

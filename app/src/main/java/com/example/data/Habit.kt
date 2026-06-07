@@ -7,6 +7,7 @@ import androidx.room.PrimaryKey
 data class Habit(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val name: String,
+    val userEmail: String = "local",
     val category: String = "Health",  // "Health", "Mind", "Study", "Work"
     val streak: Int = 0,
     val isCompletedToday: Boolean = false,

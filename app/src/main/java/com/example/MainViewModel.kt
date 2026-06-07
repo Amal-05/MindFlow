@@ -22,41 +22,53 @@ class MainViewModel(private val repository: TaskAndNoteRepository) : ViewModel()
 
     val selectedTag = MutableStateFlow("All")
     val searchQuery = MutableStateFlow("")
+    val activeUserEmail = MutableStateFlow("local")
     
     private val _aiState = MutableStateFlow<AiState>(AiState.Idle)
     val aiState: StateFlow<AiState> = _aiState.asStateFlow()
 
-    // --- Tab filters and query bindings ---
+    // --- Tab filters and query bindings (User Account Isolated) ---
     val filteredNotes: StateFlow<List<Note>> = combine(
         repository.allNotes,
+        activeUserEmail,
         selectedTag,
         searchQuery
-    ) { notes, tag, query ->
+    ) { notes, email, tag, query ->
         notes.filter { note ->
+            val matchesUser = note.userEmail == email
             val matchesTag = (tag == "All" || note.tag.equals(tag, ignoreCase = true))
             val matchesQuery = query.isEmpty() ||
                     note.title.contains(query, ignoreCase = true) ||
                     note.content.contains(query, ignoreCase = true) ||
                     note.checklistText.contains(query, ignoreCase = true)
-            matchesTag && matchesQuery
+            matchesUser && matchesTag && matchesQuery
         }
     }.stateIn(scope = viewModelScope, started = SharingStarted.WhileSubscribed(5000), initialValue = emptyList())
 
     val filteredTasks: StateFlow<List<Task>> = combine(
         repository.allTasks,
+        activeUserEmail,
         selectedTag,
         searchQuery
-    ) { tasks, tag, query ->
+    ) { tasks, email, tag, query ->
         tasks.filter { task ->
+            val matchesUser = task.userEmail == email
             val matchesTag = (tag == "All" || task.tag.equals(tag, ignoreCase = true))
             val matchesQuery = query.isEmpty() ||
                     task.title.contains(query, ignoreCase = true) ||
                     task.noteText.contains(query, ignoreCase = true)
-            matchesTag && matchesQuery
+            matchesUser && matchesTag && matchesQuery
         }
     }.stateIn(scope = viewModelScope, started = SharingStarted.WhileSubscribed(5000), initialValue = emptyList())
 
-    val allHabits: StateFlow<List<Habit>> = repository.allHabits.stateIn(
+    val allHabits: StateFlow<List<Habit>> = combine(
+        repository.allHabits,
+        activeUserEmail
+    ) { habits, email ->
+        habits.filter { it.userEmail == email }
+    }.stateIn(scope = viewModelScope, started = SharingStarted.WhileSubscribed(5000), initialValue = emptyList())
+
+    val allUserProfiles: StateFlow<List<UserProfile>> = repository.allUserProfiles.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -70,6 +82,36 @@ class MainViewModel(private val repository: TaskAndNoteRepository) : ViewModel()
     val userProfileBio = MutableStateFlow("Designing the future, one task at a time.")
     val userProfileEmoji = MutableStateFlow("🚀")
     val notifyIntervalMinutes = MutableStateFlow(30)
+
+    init {
+        viewModelScope.launch {
+            repository.activeUserProfile.collect { user ->
+                if (user != null) {
+                    activeUserEmail.value = user.email
+                    userProfileName.value = user.displayName
+                    userProfileBio.value = user.bio
+                    userProfileEmoji.value = user.emoji
+                    appThemeDark.value = user.themeDark
+                    appLockPin.value = user.appLockPin
+                    notifyIntervalMinutes.value = user.notifyIntervalMinutes
+                    if (user.appLockPin.isNotEmpty()) {
+                        appLockUnlocked.value = false
+                    } else {
+                        appLockUnlocked.value = true
+                    }
+                } else {
+                    activeUserEmail.value = "local"
+                    userProfileName.value = "Creative Genius"
+                    userProfileBio.value = "Designing the future, one task at a time."
+                    userProfileEmoji.value = "🚀"
+                    appThemeDark.value = true
+                    appLockPin.value = ""
+                    appLockUnlocked.value = true
+                    notifyIntervalMinutes.value = 30
+                }
+            }
+        }
+    }
 
     // --- Active Pomodoro Timer / Focus States ---
     val focusSessionActive = MutableStateFlow(false)
@@ -106,6 +148,7 @@ class MainViewModel(private val repository: TaskAndNoteRepository) : ViewModel()
                 Task(
                     title = title,
                     noteText = description,
+                    userEmail = activeUserEmail.value,
                     priority = priority,
                     tag = tag,
                     category = category,
@@ -149,6 +192,7 @@ class MainViewModel(private val repository: TaskAndNoteRepository) : ViewModel()
                 Note(
                     title = title,
                     content = content,
+                    userEmail = activeUserEmail.value,
                     tag = tag,
                     colorHex = colorHex,
                     checklistText = checklistText
@@ -175,6 +219,7 @@ class MainViewModel(private val repository: TaskAndNoteRepository) : ViewModel()
             repository.insertHabit(
                 Habit(
                     name = name,
+                    userEmail = activeUserEmail.value,
                     category = category,
                     triggerTime = triggerTime
                 )
@@ -210,13 +255,66 @@ class MainViewModel(private val repository: TaskAndNoteRepository) : ViewModel()
 
     // --- Custom Profile Preferences Update ---
     fun saveProfile(name: String, bio: String, emoji: String, isDark: Boolean, lockPinCode: String) {
-        userProfileName.value = name
-        userProfileBio.value = bio
-        userProfileEmoji.value = emoji
-        appThemeDark.value = isDark
-        appLockPin.value = lockPinCode
-        if (lockPinCode.isNotEmpty()) {
-            appLockUnlocked.value = false
+        viewModelScope.launch {
+            val email = activeUserEmail.value
+            if (email != "local") {
+                val existing = repository.getUserByEmail(email)
+                if (existing != null) {
+                    repository.insertUserProfile(
+                        existing.copy(
+                            displayName = name,
+                            bio = bio,
+                            emoji = emoji,
+                            themeDark = isDark,
+                            appLockPin = lockPinCode
+                        )
+                    )
+                }
+            } else {
+                userProfileName.value = name
+                userProfileBio.value = bio
+                userProfileEmoji.value = emoji
+                appThemeDark.value = isDark
+                appLockPin.value = lockPinCode
+                if (lockPinCode.isNotEmpty()) {
+                    appLockUnlocked.value = false
+                } else {
+                    appLockUnlocked.value = true
+                }
+            }
+        }
+    }
+
+    fun signUpOrLoginWithGoogle(email: String, name: String, photoUrl: String = "", emoji: String = "🌐") {
+        viewModelScope.launch {
+            repository.logoutAllUserProfiles()
+            val existing = repository.getUserByEmail(email)
+            if (existing != null) {
+                repository.insertUserProfile(
+                    existing.copy(
+                        isLoggedIn = true,
+                        displayName = name,
+                        photoUrl = photoUrl
+                    )
+                )
+            } else {
+                repository.insertUserProfile(
+                    UserProfile(
+                        email = email,
+                        displayName = name,
+                        photoUrl = photoUrl,
+                        emoji = emoji,
+                        isLoggedIn = true,
+                        themeDark = true
+                    )
+                )
+            }
+        }
+    }
+
+    fun signOutCurrentAccount() {
+        viewModelScope.launch {
+            repository.logoutAllUserProfiles()
         }
     }
 
@@ -252,6 +350,7 @@ class MainViewModel(private val repository: TaskAndNoteRepository) : ViewModel()
                     Task(
                         title = taskTitle,
                         noteText = "Generated via AI note translation",
+                        userEmail = activeUserEmail.value,
                         priority = "Medium",
                         tag = tag,
                         category = "Personal"

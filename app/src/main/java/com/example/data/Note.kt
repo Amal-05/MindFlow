@@ -8,6 +8,7 @@ data class Note(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
     val content: String = "",
+    val userEmail: String = "local",
     val tag: String = "Personal",     // "Work", "Personal", "Ideas", "Urgent"
     val colorHex: String = "Slate",    // "Slate", "Lavender", "Blue", "Mint", "Peach", "Amber"
     val checklistText: String = "",   // Markdown format checklist: "[ ] Task 1\n[x] Task 2"

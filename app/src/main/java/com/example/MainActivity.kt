@@ -71,6 +71,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             val isDarkTheme by viewModel.appThemeDark.collectAsStateWithLifecycle()
             var isAuthenticated by remember { mutableStateOf(false) }
+            val activeUser by viewModel.activeUserEmail.collectAsStateWithLifecycle()
+
+            LaunchedEffect(activeUser) {
+                isAuthenticated = activeUser != "local"
+            }
+
             MyApplicationTheme(darkTheme = isDarkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -346,7 +352,7 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
                                 else -> 0
                             }
                         }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Navigate Back")
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Navigate Back")
                         }
                     } else {
                         Box(modifier = Modifier.padding(start = 14.dp)) {
