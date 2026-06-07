@@ -239,9 +239,6 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
     var showNoteCreator by remember { mutableStateOf(false) }
     var noteToEdit by remember { mutableStateOf<Note?>(null) }
     var showHabitCreator by remember { mutableStateOf(false) }
-    var showDrawPad by remember { mutableStateOf(false) }
-    var showVoiceController by remember { mutableStateOf(false) }
-    var showOcrScanner by remember { mutableStateOf(false) }
 
     // Collect current values
     val notes by viewModel.filteredNotes.collectAsStateWithLifecycle()
@@ -307,8 +304,11 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
                         "Kanban Workflow" to Icons.Default.Build,
                         "Class Study Assistant" to Icons.Default.Star,
                         "Folders & Collab" to Icons.Default.Share,
-                        "Life Dashboard & Coach" to Icons.Default.Favorite,
-                        "Security Preferences" to Icons.Default.Settings
+                        "Interactive Sketch Canvas" to Icons.Default.Create,
+                        "Vocal Transcriber" to Icons.Default.PlayArrow,
+                        "OCR Digitizer Scanner" to Icons.Default.Search,
+                        "Emotional Life Plan" to Icons.Default.Favorite,
+                        "Security & Settings" to Icons.Default.Settings
                     )
 
                     LazyColumn(
@@ -368,8 +368,11 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
                                 4 -> "Pipeline Kanban Board"
                                 5 -> "Active Recall Study"
                                 6 -> "Collab Folder Sync"
-                                7 -> "Emotional Life Plan"
-                                8 -> "Security & Preference"
+                                7 -> "Interactive Sketch Canvas"
+                                8 -> "AI Speech Transcriber"
+                                9 -> "OCR Document Digitizer"
+                                10 -> "Executive Life Coach"
+                                11 -> "Security & Preferences"
                                 else -> "Workspace"
                             },
                             fontWeight = FontWeight.ExtraBold,
@@ -407,9 +410,9 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
                             noteToEdit = null
                             showNoteCreator = true
                         },
-                        onRecordVoiceQuick = { showVoiceController = true },
-                        onDrawPadQuick = { showDrawPad = true },
-                        onOcrScannerQuick = { showOcrScanner = true }
+                        onRecordVoiceQuick = { navigationIndex = 8 },
+                        onDrawPadQuick = { navigationIndex = 7 },
+                        onOcrScannerQuick = { navigationIndex = 9 }
                     )
                     1 -> TasksWorkspace(
                         viewModel = viewModel,
@@ -434,7 +437,7 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
                             noteToEdit = it
                             showNoteCreator = true
                         },
-                        onDrawNotes = { showDrawPad = true }
+                        onDrawNotes = { navigationIndex = 7 }
                     )
                     3 -> DailyHubWorkspace(
                         viewModel = viewModel,
@@ -466,12 +469,24 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
                             showNoteCreator = true
                         }
                     )
-                    7 -> LifeDashboardScreen(
+                    7 -> DrawingWorkspace(
+                        viewModel = viewModel,
+                        onNavigateBack = { navigationIndex = 2 }
+                    )
+                    8 -> VoiceAssistantWorkspace(
+                        viewModel = viewModel,
+                        onNavigateBack = { navigationIndex = 0 }
+                    )
+                    9 -> OcrScannerWorkspace(
+                        viewModel = viewModel,
+                        onNavigateBack = { navigationIndex = 0 }
+                    )
+                    10 -> LifeDashboardScreen(
                         viewModel = viewModel,
                         tasks = tasks,
                         notes = notes
                     )
-                    8 -> ControlAndPreferencesWorkspace(
+                    11 -> PreferencesWorkspace(
                         viewModel = viewModel,
                         tasks = tasks,
                         notes = notes
@@ -554,71 +569,6 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
             onSave = { name, cat, time ->
                 viewModel.addHabit(name, cat, time)
                 showHabitCreator = false
-            }
-        )
-    }
-
-    // Sketch Canvas Dialog
-    if (showDrawPad) {
-        DrawingCanvasDialog(
-            onDismiss = { showDrawPad = false },
-            onSaveCanvas = { title, content ->
-                viewModel.addNote(
-                    title = "🎨 Draw: $title",
-                    content = content,
-                    tag = "Ideas",
-                    colorHex = "Peach",
-                    checklistText = ""
-                )
-                showDrawPad = false
-            }
-        )
-    }
-
-    // Simulated Voice Parser Command Dialog
-    if (showVoiceController) {
-        VoiceCommandDialog(
-            onDismiss = { showVoiceController = false },
-            onExecuteVoiceCommand = { phrase ->
-                val lower = phrase.lowercase()
-                if (lower.contains("task") || lower.contains("todo")) {
-                    val taskTitle = phrase.substringAfter("task").substringAfter("todo").trim().capitalize()
-                    viewModel.addTask(
-                        title = if (taskTitle.isNotEmpty()) taskTitle else "Voice Command task",
-                        description = "Created automatically via voice command: \"$phrase\"",
-                        priority = "High",
-                        tag = "Personal",
-                        category = "Personal",
-                        dueDateLong = System.currentTimeMillis() + 86400000L,
-                        dueTime = "05:00 PM"
-                    )
-                } else {
-                    viewModel.addNote(
-                        title = "🎙️ Voice Transcribe Note",
-                        content = phrase,
-                        tag = "Ideas",
-                        colorHex = "Blue",
-                        checklistText = ""
-                    )
-                }
-                showVoiceController = false
-            }
-        )
-    }
-
-    // OCR Document Scanner Mockup Dialog
-    if (showOcrScanner) {
-        OcrScannerDialog(
-            onDismiss = { showOcrScanner = false },
-            onSaveOcrText = { title, payload ->
-                viewModel.addNote(
-                    title = "📷 Scanned: $title",
-                    content = payload,
-                    tag = "Work",
-                    colorHex = "Mint",
-                    checklistText = ""
-                )
-                showOcrScanner = false
             }
         )
     }
