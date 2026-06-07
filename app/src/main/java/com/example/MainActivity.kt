@@ -253,245 +253,232 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
     val pBio by viewModel.userProfileBio.collectAsStateWithLifecycle()
     val pEmoji by viewModel.userProfileEmoji.collectAsStateWithLifecycle()
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet {
-                Column(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(280.dp)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+    Scaffold(
+        bottomBar = {
+            val showBottomNav = navigationIndex in listOf(0, 1, 2, 11, 12, 13)
+            if (showBottomNav) {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp,
+                    modifier = Modifier.clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                 ) {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                    NavigationBarItem(
+                        selected = navigationIndex == 0,
+                        onClick = { navigationIndex = 0 },
+                        icon = { Icon(Icons.Default.Home, contentDescription = "Home", modifier = Modifier.size(22.dp)) },
+                        label = { Text("Home", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        modifier = Modifier.testTag("nav_home_tab")
+                    )
+                    NavigationBarItem(
+                        selected = navigationIndex == 1,
+                        onClick = { navigationIndex = 1 },
+                        icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Tasks", modifier = Modifier.size(22.dp)) },
+                        label = { Text("Tasks", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        modifier = Modifier.testTag("nav_tasks_tab")
+                    )
+                    NavigationBarItem(
+                        selected = navigationIndex == 2,
+                        onClick = { navigationIndex = 2 },
+                        icon = { Icon(Icons.Default.Edit, contentDescription = "Notes", modifier = Modifier.size(22.dp)) },
+                        label = { Text("Notes", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        modifier = Modifier.testTag("nav_notes_tab")
+                    )
+                    NavigationBarItem(
+                        selected = navigationIndex == 12,
+                        onClick = { navigationIndex = 12 },
+                        icon = { Icon(Icons.Default.DateRange, contentDescription = "Calendar", modifier = Modifier.size(22.dp)) },
+                        label = { Text("Calendar", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        modifier = Modifier.testTag("nav_calendar_tab")
+                    )
+                    NavigationBarItem(
+                        selected = navigationIndex == 13,
+                        onClick = { navigationIndex = 13 },
+                        icon = { Icon(Icons.Default.Star, contentDescription = "AI", modifier = Modifier.size(22.dp)) },
+                        label = { Text("AI", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        modifier = Modifier.testTag("nav_ai_tab")
+                    )
+                    NavigationBarItem(
+                        selected = navigationIndex == 11,
+                        onClick = { navigationIndex = 11 },
+                        icon = { Icon(Icons.Default.Person, contentDescription = "Profile", modifier = Modifier.size(22.dp)) },
+                        label = { Text("Profile", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        modifier = Modifier.testTag("nav_profile_tab")
+                    )
+                }
+            }
+        },
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        text = when (navigationIndex) {
+                            0 -> "Mind Flow Workspace"
+                            1 -> "Advanced Task Directives"
+                            2 -> "Secure Sketch & Notebook"
+                            3 -> "Daily Streak Rituals"
+                            4 -> "Pipeline Kanban Board"
+                            5 -> "Active Recall Study"
+                            6 -> "Collab Folder Sync"
+                            7 -> "Interactive Sketch Canvas"
+                            8 -> "AI Speech Transcriber"
+                            9 -> "OCR Document Digitizer"
+                            10 -> "Executive Life Coach"
+                            11 -> "Profile & Preferences"
+                            12 -> "Calendar Ledger & Timeline"
+                            13 -> "Futuristic Cognitive Core"
+                            else -> "Mind Flow"
+                        },
+                        fontWeight = FontWeight.Black,
+                        fontSize = 16.sp
+                    )
+                },
+                navigationIcon = {
+                    val isSubScreen = navigationIndex !in listOf(0, 1, 2, 11, 12, 13)
+                    if (isSubScreen) {
+                        IconButton(onClick = {
+                            navigationIndex = when (navigationIndex) {
+                                4 -> 1
+                                5 -> 13
+                                6 -> 2
+                                7 -> 2
+                                8 -> 13
+                                9 -> 0
+                                else -> 0
+                            }
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Navigate Back")
+                        }
+                    } else {
+                        Box(modifier = Modifier.padding(start = 14.dp)) {
                             Box(
                                 modifier = Modifier
-                                    .size(40.dp)
-                                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(pEmoji, fontSize = 20.sp)
-                            }
-                            Column {
-                                Text(pName, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                Text(pBio, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(pEmoji, fontSize = 18.sp)
                             }
                         }
                     }
-
-                    Text("💼 WORKSPACE MODULES", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(horizontal = 8.dp))
-                    
-                    val drawerItems = listOf(
-                        "Dashboard Panel" to Icons.Default.Home,
-                        "Advanced Tasks" to Icons.Default.CheckCircle,
-                        "Notes & Sketch Pad" to Icons.Default.Edit,
-                        "Daily Habits Hub" to Icons.Default.Refresh,
-                        "Kanban Workflow" to Icons.Default.Build,
-                        "Class Study Assistant" to Icons.Default.Star,
-                        "Folders & Collab" to Icons.Default.Share,
-                        "Interactive Sketch Canvas" to Icons.Default.Create,
-                        "Vocal Transcriber" to Icons.Default.PlayArrow,
-                        "OCR Digitizer Scanner" to Icons.Default.Search,
-                        "Emotional Life Plan" to Icons.Default.Favorite,
-                        "Security & Settings" to Icons.Default.Settings
-                    )
-
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        itemsIndexed(drawerItems) { idx, item ->
-                            val isSelected = idx == navigationIndex
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                                        else Color.Transparent
-                                    )
-                                    .clickable {
-                                        navigationIndex = idx
-                                        scope.launch { drawerState.close() }
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = item.second,
-                                    contentDescription = null,
-                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = item.first,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Secure cloud synchronizer verified", fontSize = 9.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.align(Alignment.CenterHorizontally))
-                }
-            }
-        }
-    ) {
-        Scaffold(
-            topBar = {
-                CenterAlignedTopAppBar(
-                    title = {
-                        Text(
-                            text = when (navigationIndex) {
-                                0 -> "Infinity Dashboard"
-                                1 -> "Task Directives"
-                                2 -> "Workspace Notebook"
-                                3 -> "Daily Streak Rituals"
-                                4 -> "Pipeline Kanban Board"
-                                5 -> "Active Recall Study"
-                                6 -> "Collab Folder Sync"
-                                7 -> "Interactive Sketch Canvas"
-                                8 -> "AI Speech Transcriber"
-                                9 -> "OCR Document Digitizer"
-                                10 -> "Executive Life Coach"
-                                11 -> "Security & Preferences"
-                                else -> "Workspace"
-                            },
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 16.sp
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Default.Menu, contentDescription = "Menu Switch Toggle")
-                        }
-                    },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                    )
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
-            }
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                when (navigationIndex) {
-                    0 -> DashboardWorkspace(
-                        viewModel = viewModel,
-                        tasks = tasks,
-                        notes = notes,
-                        habits = habits,
-                        onNavigateToTab = { index -> navigationIndex = index },
-                        onAddTaskQuick = {
-                            taskToEdit = null
-                            showTaskCreator = true
-                        },
-                        onAddNoteQuick = {
-                            noteToEdit = null
-                            showNoteCreator = true
-                        },
-                        onRecordVoiceQuick = { navigationIndex = 8 },
-                        onDrawPadQuick = { navigationIndex = 7 },
-                        onOcrScannerQuick = { navigationIndex = 9 }
-                    )
-                    1 -> TasksWorkspace(
-                        viewModel = viewModel,
-                        tasks = tasks,
-                        onAddTask = {
-                            taskToEdit = null
-                            showTaskCreator = true
-                        },
-                        onEditTask = {
-                            taskToEdit = it
-                            showTaskCreator = true
-                        }
-                    )
-                    2 -> NotesWorkspace(
-                        viewModel = viewModel,
-                        notes = notes,
-                        onAddNote = {
-                            noteToEdit = null
-                            showNoteCreator = true
-                        },
-                        onEditNote = {
-                            noteToEdit = it
-                            showNoteCreator = true
-                        },
-                        onDrawNotes = { navigationIndex = 7 }
-                    )
-                    3 -> DailyHubWorkspace(
-                        viewModel = viewModel,
-                        habits = habits,
-                        tasks = tasks,
-                        onAddHabit = { showHabitCreator = true }
-                    )
-                    4 -> KanbanBoardScreen(
-                        viewModel = viewModel,
-                        tasks = tasks,
-                        onSelectTask = {
-                            taskToEdit = it
-                            showTaskCreator = true
-                        },
-                        onAddTaskDirectly = { _ ->
-                            taskToEdit = null
-                            showTaskCreator = true
-                        }
-                    )
-                    5 -> StudyAssistantScreen(
-                        viewModel = viewModel,
-                        notes = notes
-                    )
-                    6 -> FolderCollabScreen(
-                        viewModel = viewModel,
-                        notes = notes,
-                        onSelectNote = {
-                            noteToEdit = it
-                            showNoteCreator = true
-                        }
-                    )
-                    7 -> DrawingWorkspace(
-                        viewModel = viewModel,
-                        onNavigateBack = { navigationIndex = 2 }
-                    )
-                    8 -> VoiceAssistantWorkspace(
-                        viewModel = viewModel,
-                        onNavigateBack = { navigationIndex = 0 }
-                    )
-                    9 -> OcrScannerWorkspace(
-                        viewModel = viewModel,
-                        onNavigateBack = { navigationIndex = 0 }
-                    )
-                    10 -> LifeDashboardScreen(
-                        viewModel = viewModel,
-                        tasks = tasks,
-                        notes = notes
-                    )
-                    11 -> PreferencesWorkspace(
-                        viewModel = viewModel,
-                        tasks = tasks,
-                        notes = notes
-                    )
-                }
+            )
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            when (navigationIndex) {
+                0 -> DashboardWorkspace(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    notes = notes,
+                    habits = habits,
+                    onNavigateToTab = { index -> navigationIndex = index },
+                    onAddTaskQuick = {
+                        taskToEdit = null
+                        showTaskCreator = true
+                    },
+                    onAddNoteQuick = {
+                        noteToEdit = null
+                        showNoteCreator = true
+                    },
+                    onRecordVoiceQuick = { navigationIndex = 8 },
+                    onDrawPadQuick = { navigationIndex = 7 },
+                    onOcrScannerQuick = { navigationIndex = 9 }
+                )
+                1 -> TasksWorkspace(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    onAddTask = {
+                        taskToEdit = null
+                        showTaskCreator = true
+                    },
+                    onEditTask = {
+                        taskToEdit = it
+                        showTaskCreator = true
+                    }
+                )
+                2 -> NotesWorkspace(
+                    viewModel = viewModel,
+                    notes = notes,
+                    onAddNote = {
+                        noteToEdit = null
+                        showNoteCreator = true
+                    },
+                    onEditNote = {
+                        noteToEdit = it
+                        showNoteCreator = true
+                    },
+                    onDrawNotes = { navigationIndex = 7 }
+                )
+                3 -> DailyHubWorkspace(
+                    viewModel = viewModel,
+                    habits = habits,
+                    tasks = tasks,
+                    onAddHabit = { showHabitCreator = true }
+                )
+                4 -> KanbanBoardScreen(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    onSelectTask = {
+                        taskToEdit = it
+                        showTaskCreator = true
+                    },
+                    onAddTaskDirectly = { _ ->
+                        taskToEdit = null
+                        showTaskCreator = true
+                    }
+                )
+                5 -> StudyAssistantScreen(
+                    viewModel = viewModel,
+                    notes = notes
+                )
+                6 -> FolderCollabScreen(
+                    viewModel = viewModel,
+                    notes = notes,
+                    onSelectNote = {
+                        noteToEdit = it
+                        showNoteCreator = true
+                    }
+                )
+                7 -> DrawingWorkspace(
+                    viewModel = viewModel,
+                    onNavigateBack = { navigationIndex = 2 }
+                )
+                8 -> VoiceAssistantWorkspace(
+                    viewModel = viewModel,
+                    onNavigateBack = { navigationIndex = 13 }
+                )
+                9 -> OcrScannerWorkspace(
+                    viewModel = viewModel,
+                    onNavigateBack = { navigationIndex = 2 }
+                )
+                10 -> LifeDashboardScreen(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    notes = notes
+                )
+                11 -> PreferencesWorkspace(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    notes = notes
+                )
+                12 -> CalendarWorkspace(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    habits = habits
+                )
+                13 -> AiWorkspace(
+                    viewModel = viewModel,
+                    tasks = tasks,
+                    notes = notes
+                )
             }
         }
     }
