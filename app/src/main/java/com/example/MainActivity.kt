@@ -421,7 +421,9 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
                         noteToEdit = it
                         showNoteCreator = true
                     },
-                    onDrawNotes = { navigationIndex = 7 }
+                    onDrawNotes = { navigationIndex = 7 },
+                    onVoiceMemo = { navigationIndex = 8 },
+                    onOcrScan = { navigationIndex = 9 }
                 )
                 3 -> DailyHubWorkspace(
                     viewModel = viewModel,
@@ -483,7 +485,9 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
                 13 -> AiWorkspace(
                     viewModel = viewModel,
                     tasks = tasks,
-                    notes = notes
+                    notes = notes,
+                    onVoiceMemo = { navigationIndex = 8 },
+                    onOcrScan = { navigationIndex = 9 }
                 )
             }
         }

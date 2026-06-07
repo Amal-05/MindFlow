@@ -28,7 +28,9 @@ fun NotesWorkspace(
     notes: List<Note>,
     onAddNote: () -> Unit,
     onEditNote: (Note) -> Unit,
-    onDrawNotes: () -> Unit
+    onDrawNotes: () -> Unit,
+    onVoiceMemo: () -> Unit = {},
+    onOcrScan: () -> Unit = {}
 ) {
     val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
 
@@ -64,6 +66,38 @@ fun NotesWorkspace(
                 Icon(Icons.Default.Edit, contentDescription = "Sketch Pad", modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Sketch Pad", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Voice and OCR entry shortcuts
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedButton(
+                onClick = onVoiceMemo,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(4.dp))
+                Text("🎙️ Voice Entry", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+
+            OutlinedButton(
+                onClick = onOcrScan,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.secondary)
+                Spacer(Modifier.width(4.dp))
+                Text("📷 OCR Scanner", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
 

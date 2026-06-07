@@ -38,7 +38,9 @@ data class DiscussionBubble(
 fun AiWorkspace(
     viewModel: MainViewModel,
     tasks: List<Task>,
-    notes: List<Note>
+    notes: List<Note>,
+    onVoiceMemo: () -> Unit = {},
+    onOcrScan: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var promptQuery by remember { mutableStateOf("") }
@@ -155,6 +157,40 @@ fun AiWorkspace(
                     Text("COGNITIVE INTELLIGENCE CORE", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = MaterialTheme.colorScheme.primary)
                     Text("Synapse connection rating: Optimal. Ask anything or choose quick directives.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                 }
+            }
+        }
+
+        // Sensory cognitive tools row inside AI screen
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = onVoiceMemo,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ),
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("🎙️ Voice Assistant", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Button(
+                onClick = onOcrScan,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ),
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("📷 OCR Doc Scanner", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
 
