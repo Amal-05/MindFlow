@@ -71,6 +71,23 @@ object GeminiClient {
 
     val apiService: GeminiApiService = retrofit.create(GeminiApiService::class.java)
 
+    suspend fun generateRawText(prompt: String): String? {
+        val apiKey = BuildConfig.GEMINI_API_KEY
+        if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+            return null
+        }
+        val request = GeminiRequest(
+            contents = listOf(ContentPart(parts = listOf(TextPart(text = prompt))))
+        )
+        return try {
+            val response = apiService.generateContent(apiKey, request)
+            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
     suspend fun summarizeAndExtractTasks(noteTitle: String, noteContent: String): GeminiTaskSuggestions? {
         val apiKey = BuildConfig.GEMINI_API_KEY
         if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {

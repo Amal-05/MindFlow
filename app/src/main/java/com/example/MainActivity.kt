@@ -53,6 +53,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.*
+import com.example.ui.*
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -69,13 +70,21 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val isDarkTheme by viewModel.appThemeDark.collectAsStateWithLifecycle()
+            var isAuthenticated by remember { mutableStateOf(false) }
             MyApplicationTheme(darkTheme = isDarkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppLockWrapper(viewModel = viewModel) {
-                        MainNavigationScreen(viewModel = viewModel)
+                    if (!isAuthenticated) {
+                        AuthScreen(
+                            viewModel = viewModel,
+                            onAuthSuccess = { isAuthenticated = true }
+                        )
+                    } else {
+                        AppLockWrapper(viewModel = viewModel) {
+                            MainNavigationScreen(viewModel = viewModel)
+                        }
                     }
                 }
             }
@@ -221,6 +230,8 @@ fun AppLockWrapper(viewModel: MainViewModel, content: @Composable () -> Unit) {
 @Composable
 fun MainNavigationScreen(viewModel: MainViewModel) {
     var navigationIndex by remember { mutableStateOf(0) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
     
     // Dialog triggers
     var showTaskCreator by remember { mutableStateOf(false) }
@@ -239,106 +250,233 @@ fun MainNavigationScreen(viewModel: MainViewModel) {
     val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
+    
+    // Profile metadata
+    val pName by viewModel.userProfileName.collectAsStateWithLifecycle()
+    val pBio by viewModel.userProfileBio.collectAsStateWithLifecycle()
+    val pEmoji by viewModel.userProfileEmoji.collectAsStateWithLifecycle()
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                windowInsets = WindowInsets.navigationBars
-            ) {
-                NavigationBarItem(
-                    selected = navigationIndex == 0,
-                    onClick = { navigationIndex = 0 },
-                    icon = { Icon(Icons.Default.Home, "Dashboard") },
-                    label = { Text("Dashboard", fontSize = 11.sp) }
-                )
-                NavigationBarItem(
-                    selected = navigationIndex == 1,
-                    onClick = { navigationIndex = 1 },
-                    icon = { Icon(Icons.Default.CheckCircle, "Todos") },
-                    label = { Text("Todos", fontSize = 11.sp) }
-                )
-                NavigationBarItem(
-                    selected = navigationIndex == 2,
-                    onClick = { navigationIndex = 2 },
-                    icon = { Icon(Icons.Default.Edit, "Notes Workspace") },
-                    label = { Text("Notes", fontSize = 11.sp) }
-                )
-                NavigationBarItem(
-                    selected = navigationIndex == 3,
-                    onClick = { navigationIndex = 3 },
-                    icon = { Icon(Icons.Default.Refresh, "Habits & Habits") },
-                    label = { Text("Daily Hub", fontSize = 11.sp) }
-                )
-                NavigationBarItem(
-                    selected = navigationIndex == 4,
-                    onClick = { navigationIndex = 4 },
-                    icon = { Icon(Icons.Default.Settings, "Analytics Panel") },
-                    label = { Text("Control", fontSize = 11.sp) }
-                )
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(280.dp)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(pEmoji, fontSize = 20.sp)
+                            }
+                            Column {
+                                Text(pName, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(pBio, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+
+                    Text("💼 WORKSPACE MODULES", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(horizontal = 8.dp))
+                    
+                    val drawerItems = listOf(
+                        "Dashboard Panel" to Icons.Default.Home,
+                        "Advanced Tasks" to Icons.Default.CheckCircle,
+                        "Notes & Sketch Pad" to Icons.Default.Edit,
+                        "Daily Habits Hub" to Icons.Default.Refresh,
+                        "Kanban Workflow" to Icons.Default.Build,
+                        "Class Study Assistant" to Icons.Default.Star,
+                        "Folders & Collab" to Icons.Default.Share,
+                        "Life Dashboard & Coach" to Icons.Default.Favorite,
+                        "Security Preferences" to Icons.Default.Settings
+                    )
+
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        itemsIndexed(drawerItems) { idx, item ->
+                            val isSelected = idx == navigationIndex
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                        else Color.Transparent
+                                    )
+                                    .clickable {
+                                        navigationIndex = idx
+                                        scope.launch { drawerState.close() }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = item.second,
+                                    contentDescription = null,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = item.first,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Secure cloud synchronizer verified", fontSize = 9.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.align(Alignment.CenterHorizontally))
+                }
             }
         }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            when (navigationIndex) {
-                0 -> DashboardWorkspace(
-                    viewModel = viewModel,
-                    tasks = tasks,
-                    notes = notes,
-                    habits = habits,
-                    onNavigateToTab = { index -> navigationIndex = index },
-                    onAddTaskQuick = {
-                        taskToEdit = null
-                        showTaskCreator = true
+    ) {
+        Scaffold(
+            topBar = {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Text(
+                            text = when (navigationIndex) {
+                                0 -> "Infinity Dashboard"
+                                1 -> "Task Directives"
+                                2 -> "Workspace Notebook"
+                                3 -> "Daily Streak Rituals"
+                                4 -> "Pipeline Kanban Board"
+                                5 -> "Active Recall Study"
+                                6 -> "Collab Folder Sync"
+                                7 -> "Emotional Life Plan"
+                                8 -> "Security & Preference"
+                                else -> "Workspace"
+                            },
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 16.sp
+                        )
                     },
-                    onAddNoteQuick = {
-                        noteToEdit = null
-                        showNoteCreator = true
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu Switch Toggle")
+                        }
                     },
-                    onRecordVoiceQuick = { showVoiceController = true },
-                    onDrawPadQuick = { showDrawPad = true },
-                    onOcrScannerQuick = { showOcrScanner = true }
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    )
                 )
-                1 -> TasksWorkspace(
-                    viewModel = viewModel,
-                    tasks = tasks,
-                    onAddTask = {
-                        taskToEdit = null
-                        showTaskCreator = true
-                    },
-                    onEditTask = {
-                        taskToEdit = it
-                        showTaskCreator = true
-                    }
-                )
-                2 -> NotesWorkspace(
-                    viewModel = viewModel,
-                    notes = notes,
-                    onAddNote = {
-                        noteToEdit = null
-                        showNoteCreator = true
-                    },
-                    onEditNote = {
-                        noteToEdit = it
-                        showNoteCreator = true
-                    },
-                    onDrawNotes = { showDrawPad = true }
-                )
-                3 -> DailyHubWorkspace(
-                    viewModel = viewModel,
-                    habits = habits,
-                    tasks = tasks,
-                    onAddHabit = { showHabitCreator = true }
-                )
-                4 -> ControlAndPreferencesWorkspace(
-                    viewModel = viewModel,
-                    tasks = tasks,
-                    notes = notes
-                )
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                when (navigationIndex) {
+                    0 -> DashboardWorkspace(
+                        viewModel = viewModel,
+                        tasks = tasks,
+                        notes = notes,
+                        habits = habits,
+                        onNavigateToTab = { index -> navigationIndex = index },
+                        onAddTaskQuick = {
+                            taskToEdit = null
+                            showTaskCreator = true
+                        },
+                        onAddNoteQuick = {
+                            noteToEdit = null
+                            showNoteCreator = true
+                        },
+                        onRecordVoiceQuick = { showVoiceController = true },
+                        onDrawPadQuick = { showDrawPad = true },
+                        onOcrScannerQuick = { showOcrScanner = true }
+                    )
+                    1 -> TasksWorkspace(
+                        viewModel = viewModel,
+                        tasks = tasks,
+                        onAddTask = {
+                            taskToEdit = null
+                            showTaskCreator = true
+                        },
+                        onEditTask = {
+                            taskToEdit = it
+                            showTaskCreator = true
+                        }
+                    )
+                    2 -> NotesWorkspace(
+                        viewModel = viewModel,
+                        notes = notes,
+                        onAddNote = {
+                            noteToEdit = null
+                            showNoteCreator = true
+                        },
+                        onEditNote = {
+                            noteToEdit = it
+                            showNoteCreator = true
+                        },
+                        onDrawNotes = { showDrawPad = true }
+                    )
+                    3 -> DailyHubWorkspace(
+                        viewModel = viewModel,
+                        habits = habits,
+                        tasks = tasks,
+                        onAddHabit = { showHabitCreator = true }
+                    )
+                    4 -> KanbanBoardScreen(
+                        viewModel = viewModel,
+                        tasks = tasks,
+                        onSelectTask = {
+                            taskToEdit = it
+                            showTaskCreator = true
+                        },
+                        onAddTaskDirectly = { _ ->
+                            taskToEdit = null
+                            showTaskCreator = true
+                        }
+                    )
+                    5 -> StudyAssistantScreen(
+                        viewModel = viewModel,
+                        notes = notes
+                    )
+                    6 -> FolderCollabScreen(
+                        viewModel = viewModel,
+                        notes = notes,
+                        onSelectNote = {
+                            noteToEdit = it
+                            showNoteCreator = true
+                        }
+                    )
+                    7 -> LifeDashboardScreen(
+                        viewModel = viewModel,
+                        tasks = tasks,
+                        notes = notes
+                    )
+                    8 -> ControlAndPreferencesWorkspace(
+                        viewModel = viewModel,
+                        tasks = tasks,
+                        notes = notes
+                    )
+                }
             }
         }
     }
